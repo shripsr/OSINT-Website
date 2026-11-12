@@ -1,0 +1,425 @@
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>OSINT MAP | Intelligence Platform</title>
+
+    <!-- MapLibre -->
+    <link
+        href="https://unpkg.com/maplibre-gl@5.6.2/dist/maplibre-gl.css"
+        rel="stylesheet"
+    >
+
+    <!-- Main stylesheet -->
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <!-- ================= HEADER ================= -->
+
+    <header class="topbar">
+
+        <div class="logo">
+            OSINT<span>MAP</span>
+            <small>GEOSPATIAL INTELLIGENCE</small>
+        </div>
+
+        <div class="search-container">
+
+            <input
+                type="text"
+                id="searchInput"
+                placeholder="Search location, address or coordinates..."
+                autocomplete="off"
+            >
+
+            <button id="searchButton">
+                SEARCH
+            </button>
+            
+            <!-- NEW: Suggestions Dropdown -->
+            <div id="searchSuggestions" class="search-suggestions"></div>
+
+        </div>
+
+        <div class="system-status">
+            <span class="status-dot"></span>
+            <span id="systemStatus">INITIALIZING</span>
+        </div>
+
+    </header>
+
+
+    <!-- ================= SIDEBAR ================= -->
+
+    <aside class="sidebar">
+
+        <div class="section-title">NAVIGATION</div>
+
+        <div class="menu-item active" data-page="world">
+            <span>◈</span>
+            World Map
+        </div>
+
+        <div class="menu-item" data-page="markers">
+            <span>⌖</span>
+            Markers
+            <span class="item-count" id="markerCount">0</span>
+        </div>
+
+        <div class="menu-item" data-page="saved">
+            <span>▣</span>
+            Saved Locations
+        </div>
+
+
+        <div class="section-title">MAP TOOLS</div>
+
+        <div class="menu-item" id="locateButton">
+            <span>◎</span>
+            Locate Coordinates
+        </div>
+
+        <div class="menu-item" id="clearButton">
+            <span>⌫</span>
+            Clear Selection
+        </div>
+
+
+        <div class="section-title">LIVE LAYERS</div>
+
+        <div class="menu-item" id="flightToggle">
+            <span>&#9992;&#xFE0E;</span>
+            Flight Tracking
+            <span class="item-count" id="flightCount">OFF</span>
+        </div>
+
+
+        <div class="section-title">BASE MAP</div>
+
+        <select id="mapStyleSelect" class="layer-select">
+
+            <option value="dark">Dark Matter</option>
+            <option value="voyager">Voyager</option>
+            <option value="satellite">Satellite</option>
+
+        </select>
+
+
+        <div class="section-title">MAP INFORMATION</div>
+
+        <div class="sidebar-info">
+            <div>LATITUDE</div>
+            <span id="sideLat">0.00000</span>
+        </div>
+
+        <div class="sidebar-info">
+            <div>LONGITUDE</div>
+            <span id="sideLon">0.00000</span>
+        </div>
+
+        <div class="sidebar-info">
+            <div>ZOOM LEVEL</div>
+            <span id="sideZoom">2.0</span>
+        </div>
+
+
+        <div class="sidebar-bottom">
+            OSINT MAP
+            <span>VERSION 0.3.0</span>
+        </div>
+
+    </aside>
+
+
+    <!-- ================= MAIN MAP ================= -->
+
+    <main class="main-content">
+
+        <div id="map"></div>
+
+        <!-- MAP PROJECTION CONTROLS -->
+        <div class="projection-controls">
+            <button id="flatMapButton" class="projection-button active">
+                2D MAP
+            </button>
+
+            <button id="globeButton" class="projection-button">
+                3D GLOBE
+            </button>
+        </div>
+
+
+        <!-- LOADING OVERLAY -->
+
+        <div id="mapLoading" class="map-loading">
+
+            <div class="loader"></div>
+
+            <div>INITIALIZING MAP</div>
+
+            <small>CONNECTING TO MAP SERVICE</small>
+
+        </div>
+
+
+        <!-- LOCATION INSPECTION -->
+
+        <div class="inspection-panel" id="inspectionPanel">
+
+            <div class="panel-header">
+
+                <span>LOCATION INSPECTION</span>
+
+                <button id="closePanel">×</button>
+
+            </div>
+
+
+            <div class="panel-content">
+
+                <div class="data-label">LOCATION</div>
+
+                <input
+                    id="markerName"
+                    class="panel-input"
+                    placeholder="Location name"
+                    maxlength="80"
+                >
+
+
+                <div class="data-label">LATITUDE</div>
+
+                <div class="data-value" id="inspectLat">--</div>
+
+
+                <div class="data-label">LONGITUDE</div>
+
+                <div class="data-value" id="inspectLon">--</div>
+
+
+                <div class="data-label">COORDINATES</div>
+
+                <div class="data-value" id="inspectCoords">--</div>
+
+
+                <div class="data-label">DESCRIPTION</div>
+
+                <textarea
+                    id="markerDescription"
+                    class="panel-input description-input"
+                    placeholder="Add observations or notes..."
+                    maxlength="1000"
+                ></textarea>
+
+
+                <button id="saveMarker" class="primary-button">
+                    SAVE LOCATION
+                </button>
+
+                <button id="deleteMarker" class="danger-button">
+                    DELETE LOCATION
+                </button>
+
+            </div>
+
+        </div>
+
+
+        <!-- FLIGHT DETAILS -->
+
+        <div class="flight-panel" id="flightPanel">
+
+            <div class="panel-header">
+
+                <span>FLIGHT DETAILS</span>
+
+                <button id="closeFlightPanel">×</button>
+
+            </div>
+
+            <div class="flight-photo">
+
+                <a
+                    id="flightPhotoLink"
+                    href="#"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                >
+                    <img id="flightPhoto" alt="">
+                </a>
+
+                <div class="flight-photo-empty" id="flightPhotoEmpty">
+                    LOADING PHOTO...
+                </div>
+
+                <div class="flight-photo-credit" id="flightPhotoCredit"></div>
+
+            </div>
+
+            <div class="panel-content">
+
+                <div class="flight-callsign" id="fCallsign">--</div>
+
+                <div class="flight-subtitle" id="fSubtitle">--</div>
+
+                <div class="flight-badges" id="fBadges"></div>
+
+                <div class="flight-grid">
+
+                    <div class="flight-cell wide">
+                        <div class="data-label">ALTITUDE</div>
+                        <div class="data-value" id="fAlt">--</div>
+                    </div>
+
+                    <div class="flight-cell wide">
+                        <div class="data-label">GROUND SPEED</div>
+                        <div class="data-value" id="fSpeed">--</div>
+                    </div>
+
+                    <div class="flight-cell">
+                        <div class="data-label">HEADING</div>
+                        <div class="data-value" id="fHeading">--</div>
+                    </div>
+
+                    <div class="flight-cell">
+                        <div class="data-label">VERTICAL RATE</div>
+                        <div class="data-value" id="fVRate">--</div>
+                    </div>
+
+                    <div class="flight-cell">
+                        <div class="data-label">REGISTRATION</div>
+                        <div class="data-value" id="fReg">--</div>
+                    </div>
+
+                    <div class="flight-cell">
+                        <div class="data-label">TYPE</div>
+                        <div class="data-value" id="fType">--</div>
+                    </div>
+
+                    <div class="flight-cell">
+                        <div class="data-label">SQUAWK</div>
+                        <div class="data-value" id="fSquawk">--</div>
+                    </div>
+
+                    <div class="flight-cell">
+                        <div class="data-label">ICAO HEX</div>
+                        <div class="data-value" id="fHex">--</div>
+                    </div>
+
+                    <div class="flight-cell wide">
+                        <div class="data-label">OPERATOR</div>
+                        <div class="data-value" id="fOperator">--</div>
+                    </div>
+
+                    <div class="flight-cell wide">
+                        <div class="data-label">POSITION</div>
+                        <div class="data-value" id="fPosition">--</div>
+                    </div>
+
+                </div>
+
+                <button id="followFlight" class="primary-button">
+                    FOLLOW AIRCRAFT
+                </button>
+
+                <button id="pinFlight" class="secondary-button">
+                    PIN POSITION AS LOCATION
+                </button>
+
+                <a
+                    id="flightExternalLink"
+                    class="secondary-button"
+                    href="#"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                >
+                    OPEN IN ADS-B EXCHANGE
+                </a>
+
+            </div>
+
+        </div>
+
+
+        <!-- FLIGHT HUD (status + legend) -->
+
+        <div class="flight-hud" id="flightHud">
+
+            <div class="flight-hud-title">
+                LIVE FLIGHTS
+                <span id="flightHudCount">0</span>
+            </div>
+
+            <div class="flight-hud-status" id="flightHudStatus">--</div>
+
+            <div class="flight-legend" id="flightLegend"></div>
+
+        </div>
+
+        <div class="flight-notice" id="flightNotice"></div>
+
+
+        <!-- MAP ERROR -->
+
+        <div id="mapError" class="map-error">
+
+            <strong>MAP CONNECTION FAILED</strong>
+
+            <p id="mapErrorMessage">
+                Unable to load map.
+            </p>
+
+            <button onclick="location.reload()">
+                RETRY
+            </button>
+
+        </div>
+
+    </main>
+
+
+    <!-- ================= FOOTER ================= -->
+
+    <footer class="footer">
+
+        <div>
+            <span class="status-dot"></span>
+            <span id="footerStatus">CONNECTING</span>
+        </div>
+
+        <div id="mouseCoordinates">
+            LAT: 0.00000 | LON: 0.00000
+        </div>
+
+        <div id="mapZoom">
+            ZOOM: 2.0
+        </div>
+
+        <div>
+            © OPENSTREETMAP | CARTO | ADS-B: <a href="https://adsb.fi" target="_blank" rel="noopener noreferrer">ADSB.FI</a>
+        </div>
+
+    </footer>
+
+
+    <!-- MAPLIBRE -->
+
+    <script src="https://unpkg.com/maplibre-gl@5.6.2/dist/maplibre-gl.js"></script>
+
+    <!-- LIVE FLIGHT TRACKING (must load before script.js) -->
+
+    <script src="flights.js"></script>
+
+    <!-- MAIN SCRIPT -->
+
+    <script src="script.js"></script>
+
+</body>
+
+</html>

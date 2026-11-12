@@ -1,0 +1,1066 @@
+
+/* ==========================================
+   OSINT MAP - VERSION 0.3.0
+   ========================================== */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+:root {
+    --background: #0c1118;
+    --panel: #131b25;
+    --panel-light: #1b2633;
+    --border: #293746;
+
+    --text: #d6e0eb;
+    --muted: #78899c;
+
+    --accent: #00bcd4;
+    --accent-dark: #087e91;
+
+    --green: #00d68f;
+    --red: #e05252;
+}
+
+body {
+    background: var(--background);
+    color: var(--text);
+    font-family: Arial, sans-serif;
+    overflow: hidden;
+}
+
+
+/* ==========================================
+   HEADER
+   ========================================== */
+
+.topbar {
+    height: 65px;
+
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+
+    padding: 0 22px;
+
+    position: relative;
+    z-index: 1000;
+}
+
+.logo {
+    font-size: 20px;
+    font-weight: bold;
+    letter-spacing: 2px;
+    white-space: nowrap;
+}
+
+.logo span {
+    color: var(--accent);
+}
+
+.logo small {
+    display: block;
+
+    font-size: 8px;
+    color: var(--muted);
+
+    letter-spacing: 2px;
+    margin-top: 4px;
+}
+
+.search-container {
+    display: flex;
+    width: min(500px, 45vw);
+}
+
+.search-container input {
+    flex: 1;
+    min-width: 0;
+
+    padding: 11px;
+
+    background: #202c39;
+    border: 1px solid var(--border);
+
+    color: white;
+    outline: none;
+}
+
+.search-container input:focus {
+    border-color: var(--accent);
+}
+
+.search-container button {
+    padding: 0 18px;
+
+    background: var(--accent-dark);
+    border: none;
+
+    color: white;
+    cursor: pointer;
+
+    font-size: 11px;
+    letter-spacing: 1px;
+}
+
+.search-container button:hover {
+    background: #009bb5;
+}
+
+/* ================= MAP SEARCH SUGGESTIONS ================= */
+
+.search-container {
+    position: relative; /* Ensures dropdown anchors to this container */
+}
+
+.search-suggestions {
+    display: none; /* Hidden by default */
+    position: absolute;
+    top: 100%;
+    left: 0;
+    width: 100%;
+    
+    background: var(--panel);
+    border: 1px solid var(--accent);
+    border-top: none;
+    
+    max-height: 250px;
+    overflow-y: auto;
+    z-index: 2000;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+}
+
+.search-suggestions.active {
+    display: block;
+}
+
+.suggestion-item {
+    padding: 12px;
+    font-size: 11px;
+    color: var(--text);
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    
+    /* Prevent text from wrapping to keep it clean */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.suggestion-item:last-child {
+    border-bottom: none;
+}
+
+.suggestion-item:hover {
+    background: var(--panel-light);
+    color: var(--accent);
+}
+
+.system-status {
+    font-size: 11px;
+    color: var(--green);
+    letter-spacing: 1px;
+    white-space: nowrap;
+}
+
+.status-dot {
+    display: inline-block;
+
+    width: 7px;
+    height: 7px;
+
+    background: var(--green);
+    border-radius: 50%;
+
+    margin-right: 7px;
+}
+
+
+/* ==========================================
+   SIDEBAR
+   ========================================== */
+
+.sidebar {
+    position: absolute;
+
+    top: 65px;
+    bottom: 35px;
+    left: 0;
+
+    width: 230px;
+
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+
+    padding: 20px 12px;
+
+    z-index: 500;
+}
+
+.section-title {
+    font-size: 10px;
+
+    color: var(--muted);
+    letter-spacing: 1.5px;
+
+    margin: 18px 10px 10px;
+}
+
+.menu-item {
+    display: flex;
+    align-items: center;
+
+    padding: 12px;
+
+    font-size: 13px;
+    color: #aab8c8;
+
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.menu-item > span:first-child {
+    margin-right: 10px;
+    color: var(--accent);
+}
+
+.menu-item:hover,
+.menu-item.active {
+    background: var(--panel-light);
+    color: var(--accent);
+}
+
+.item-count {
+    margin-left: auto;
+    color: var(--muted);
+    font-size: 11px;
+}
+
+.layer-select {
+    width: 100%;
+
+    padding: 11px;
+
+    background: #202c39;
+    color: var(--text);
+
+    border: 1px solid var(--border);
+    outline: none;
+
+    cursor: pointer;
+}
+
+.layer-select:focus {
+    border-color: var(--accent);
+}
+
+.sidebar-info {
+    padding: 10px;
+
+    border-bottom: 1px solid #25313e;
+}
+
+.sidebar-info div {
+    color: var(--muted);
+    font-size: 9px;
+    margin-bottom: 5px;
+}
+
+.sidebar-info span {
+    font-family: monospace;
+    font-size: 13px;
+}
+
+.sidebar-bottom {
+    position: absolute;
+
+    bottom: 18px;
+    left: 20px;
+
+    font-size: 10px;
+    letter-spacing: 1px;
+}
+
+.sidebar-bottom span {
+    display: block;
+
+    color: var(--muted);
+    margin-top: 5px;
+
+    font-size: 9px;
+}
+
+
+/* ==========================================
+   MAP
+   ========================================== */
+
+.main-content {
+    position: absolute;
+
+    top: 65px;
+    left: 230px;
+    right: 0;
+    bottom: 35px;
+
+    background: #101820;
+}
+
+#map {
+    position: absolute;
+
+    inset: 0;
+
+    width: 100%;
+    height: 100%;
+}
+
+
+/* MapLibre controls */
+
+.maplibregl-ctrl-group {
+    background: var(--panel) !important;
+    border: 1px solid var(--border) !important;
+
+    box-shadow: 0 2px 8px #0005 !important;
+}
+
+.maplibregl-ctrl-group button {
+    background-color: var(--panel) !important;
+}
+
+.maplibregl-ctrl-group button:hover {
+    background-color: var(--panel-light) !important;
+}
+
+.maplibregl-ctrl-icon {
+    filter: invert(1);
+}
+
+.maplibregl-ctrl-scale {
+    background: #131b25dd !important;
+    border: 1px solid var(--accent) !important;
+
+    color: var(--text) !important;
+}
+
+.maplibregl-ctrl-attrib {
+    background: #131b25dd !important;
+    color: var(--text) !important;
+}
+
+.maplibregl-ctrl-attrib a {
+    color: var(--accent) !important;
+}
+
+
+/* ==========================================
+   LOADING SCREEN
+   ========================================== */
+
+.map-loading {
+    position: absolute;
+    inset: 0;
+
+    background: #0c1118;
+
+    display: flex;
+    flex-direction: column;
+
+    justify-content: center;
+    align-items: center;
+
+    gap: 15px;
+
+    z-index: 600;
+
+    font-size: 12px;
+    letter-spacing: 2px;
+}
+
+.map-loading small {
+    color: var(--muted);
+    font-size: 9px;
+}
+
+.map-loading.hidden {
+    display: none;
+}
+
+.loader {
+    width: 32px;
+    height: 32px;
+
+    border: 2px solid #263544;
+    border-top-color: var(--accent);
+
+    border-radius: 50%;
+
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+
+/* ==========================================
+   INSPECTION PANEL
+   ========================================== */
+
+.inspection-panel {
+    display: none;
+
+    position: absolute;
+
+    right: 20px;
+    top: 20px;
+
+    width: 280px;
+    max-height: calc(100% - 40px);
+
+    overflow-y: auto;
+
+    background: var(--panel);
+    border: 1px solid var(--border);
+
+    z-index: 800;
+
+    box-shadow: 0 5px 20px #0008;
+}
+
+.inspection-panel.visible {
+    display: block;
+}
+
+.panel-header {
+    padding: 14px;
+
+    border-bottom: 1px solid var(--border);
+
+    font-size: 11px;
+    letter-spacing: 1px;
+
+    color: var(--accent);
+
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.panel-header button {
+    background: none;
+    border: none;
+
+    color: var(--text);
+    font-size: 22px;
+
+    cursor: pointer;
+}
+
+.panel-content {
+    padding: 15px;
+}
+
+.data-label {
+    color: var(--muted);
+
+    font-size: 9px;
+    letter-spacing: 1px;
+
+    margin-top: 15px;
+}
+
+.data-value {
+    font-family: monospace;
+    font-size: 13px;
+
+    margin-top: 6px;
+    word-break: break-word;
+}
+
+.panel-input {
+    width: 100%;
+
+    margin-top: 7px;
+    padding: 10px;
+
+    background: #202c39;
+    color: white;
+
+    border: 1px solid var(--border);
+    outline: none;
+
+    font-family: Arial, sans-serif;
+    font-size: 12px;
+}
+
+.panel-input:focus {
+    border-color: var(--accent);
+}
+
+.description-input {
+    min-height: 85px;
+    resize: vertical;
+}
+
+.primary-button,
+.danger-button {
+    width: 100%;
+
+    margin-top: 15px;
+    padding: 11px;
+
+    border: none;
+
+    color: white;
+    cursor: pointer;
+
+    font-size: 10px;
+    letter-spacing: 1px;
+}
+
+.primary-button {
+    background: var(--accent-dark);
+}
+
+.primary-button:hover {
+    background: #009bb5;
+}
+
+.danger-button {
+    background: #542c35;
+}
+
+.danger-button:hover {
+    background: #8d3544;
+}
+
+
+/* ==========================================
+   MAP ERROR
+   ========================================== */
+
+.map-error {
+    display: none;
+
+    position: absolute;
+    inset: 0;
+
+    z-index: 900;
+
+    background: #0c1118ee;
+
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+
+    gap: 15px;
+}
+
+.map-error.visible {
+    display: flex;
+}
+
+.map-error strong {
+    color: var(--red);
+    font-size: 14px;
+    letter-spacing: 2px;
+}
+
+.map-error p {
+    color: var(--muted);
+    font-size: 12px;
+    max-width: 80%;
+    text-align: center;
+}
+
+.map-error button {
+    padding: 10px 20px;
+
+    background: var(--accent-dark);
+    color: white;
+
+    border: none;
+    cursor: pointer;
+}
+
+
+/* ==========================================
+   FOOTER
+   ========================================== */
+
+.footer {
+    position: absolute;
+    bottom: 0;
+
+    width: 100%;
+    height: 35px;
+
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+
+    padding: 0 15px;
+
+    font-size: 10px;
+    color: var(--muted);
+
+    z-index: 1000;
+}
+
+
+/* ==========================================
+   RESPONSIVE
+   ========================================== */
+
+@media (max-width: 700px) {
+
+    .sidebar {
+        width: 170px;
+    }
+
+    .main-content {
+        left: 170px;
+    }
+
+    .logo {
+        font-size: 15px;
+    }
+
+    .logo small {
+        display: none;
+    }
+
+    .search-container {
+        width: 45vw;
+    }
+
+    .system-status {
+        display: none;
+    }
+
+    .footer {
+        font-size: 8px;
+    }
+
+    .inspection-panel {
+        width: 240px;
+        right: 8px;
+        top: 8px;
+    }
+}
+
+@media (max-width: 450px) {
+
+    .sidebar {
+        width: 135px;
+        padding: 10px 5px;
+    }
+
+    .main-content {
+        left: 135px;
+    }
+
+    .section-title {
+        font-size: 8px;
+    }
+
+    .menu-item {
+        font-size: 11px;
+        padding: 10px 5px;
+    }
+
+    .logo {
+        display: none;
+    }
+}
+
+/* ================= MAP PROJECTION CONTROLS ================= */
+
+.projection-controls {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    z-index: 10;
+
+    display: flex;
+    gap: 5px;
+
+    padding: 5px;
+    background: rgba(10, 15, 22, 0.95);
+    border: 1px solid #263746;
+    border-radius: 5px;
+
+    backdrop-filter: blur(10px);
+}
+
+.projection-button {
+    background: transparent;
+    border: 1px solid transparent;
+
+    color: #8495a5;
+    padding: 10px 15px;
+
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: bold;
+    letter-spacing: 1px;
+
+    cursor: pointer;
+    transition: 0.2s;
+}
+
+.projection-button:hover {
+    color: #00d9ff;
+    border-color: #00d9ff;
+}
+
+.projection-button.active {
+    background: rgba(0, 217, 255, 0.12);
+    border-color: #00d9ff;
+    color: #00d9ff;
+}
+
+/* ==========================================
+   LIVE FLIGHT TRACKING
+   ========================================== */
+
+/* Sidebar toggle (uses its own class so the page-navigation
+   code, which clears .active, doesn't switch it off) */
+
+.menu-item.layer-on,
+.menu-item.layer-on > span:first-child,
+.menu-item.layer-on .item-count {
+    color: var(--green);
+}
+
+
+/* Flight details panel (left side, so it never overlaps
+   the location inspection panel on the right) */
+
+.flight-panel {
+    display: none;
+
+    position: absolute;
+
+    left: 20px;
+    top: 20px;
+
+    width: 270px;
+    max-height: calc(100% - 40px);
+
+    overflow-y: auto;
+
+    background: var(--panel);
+    border: 1px solid var(--border);
+
+    z-index: 800;
+
+    box-shadow: 0 5px 20px #0008;
+}
+
+.flight-panel.visible {
+    display: block;
+}
+
+.flight-callsign {
+    font-family: monospace;
+    font-size: 24px;
+    font-weight: bold;
+    letter-spacing: 1px;
+
+    color: var(--accent);
+
+    word-break: break-word;
+}
+
+.flight-subtitle {
+    margin-top: 5px;
+
+    font-size: 11px;
+    color: var(--muted);
+}
+
+.flight-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.flight-badges:not(:empty) {
+    margin-top: 10px;
+}
+
+.flight-badge {
+    padding: 3px 7px;
+
+    border: 1px solid var(--border);
+
+    font-size: 9px;
+    letter-spacing: 1px;
+}
+
+.flight-badge.military {
+    color: #ff9800;
+    border-color: #ff9800;
+}
+
+.flight-badge.emergency,
+.flight-badge.lost {
+    color: var(--red);
+    border-color: var(--red);
+}
+
+.flight-badge.ground {
+    color: var(--muted);
+}
+
+.flight-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 12px;
+}
+
+.flight-cell {
+    min-width: 0;
+}
+
+.flight-cell.wide {
+    grid-column: 1 / -1;
+}
+
+.secondary-button {
+    display: block;
+
+    width: 100%;
+
+    margin-top: 10px;
+    padding: 11px;
+
+    background: transparent;
+    border: 1px solid var(--border);
+
+    color: var(--accent);
+    cursor: pointer;
+
+    font-family: inherit;
+    font-size: 10px;
+    letter-spacing: 1px;
+
+    text-align: center;
+    text-decoration: none;
+}
+
+.secondary-button:hover {
+    background: var(--panel-light);
+    border-color: var(--accent);
+}
+
+.primary-button.toggled {
+    background: #0a8f62;
+}
+
+
+/* Status + altitude legend (bottom left, above the scale bar) */
+
+.flight-hud {
+    display: none;
+
+    position: absolute;
+
+    left: 10px;
+    bottom: 48px;
+
+    padding: 10px 12px;
+
+    background: #131b25ee;
+    border: 1px solid var(--border);
+
+    z-index: 700;
+
+    font-size: 10px;
+    letter-spacing: 1px;
+}
+
+.flight-hud.visible {
+    display: block;
+}
+
+.flight-hud-title {
+    color: var(--green);
+}
+
+.flight-hud-title span {
+    margin-left: 6px;
+
+    color: var(--text);
+    font-family: monospace;
+    font-size: 12px;
+}
+
+.flight-hud-status {
+    margin-top: 4px;
+
+    max-width: 230px;
+    word-break: break-word;
+
+    color: var(--muted);
+    font-size: 9px;
+}
+
+.flight-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px 10px;
+
+    max-width: 230px;
+    margin-top: 9px;
+
+    color: var(--muted);
+    font-size: 9px;
+}
+
+.flight-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.flight-legend i {
+    display: inline-block;
+
+    width: 8px;
+    height: 8px;
+
+    border-radius: 50%;
+}
+
+
+/* "Zoom in" message */
+
+.flight-notice {
+    display: none;
+
+    position: absolute;
+
+    left: 50%;
+    bottom: 20px;
+
+    transform: translateX(-50%);
+
+    padding: 9px 16px;
+
+    background: var(--panel);
+    border: 1px solid var(--accent);
+
+    z-index: 700;
+
+    color: var(--accent);
+    font-size: 11px;
+    letter-spacing: 1px;
+    white-space: nowrap;
+}
+
+.flight-notice.visible {
+    display: block;
+}
+
+
+/* Hover tooltip */
+
+.flight-popup .maplibregl-popup-content {
+    padding: 6px 10px;
+
+    background: var(--panel);
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+
+    color: var(--text);
+    font-family: monospace;
+    font-size: 11px;
+
+    box-shadow: 0 4px 14px #0009;
+
+    pointer-events: none;
+}
+
+.flight-popup .maplibregl-popup-tip {
+    display: none;
+}
+
+@media (max-width: 700px) {
+
+    .flight-panel {
+        width: 230px;
+        left: 8px;
+        top: 8px;
+    }
+
+    .flight-notice {
+        font-size: 9px;
+    }
+
+}
+
+.footer a {
+    color: inherit;
+}
+
+
+/* Aircraft photo (Planespotters.net) */
+
+.flight-photo {
+    background: #0c1118;
+    border-bottom: 1px solid var(--border);
+}
+
+.flight-photo img {
+    display: block;
+
+    width: 100%;
+    height: auto;
+    max-height: 190px;
+
+    object-fit: cover;
+}
+
+.flight-photo-empty {
+    height: 100px;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    color: var(--muted);
+    font-size: 10px;
+    letter-spacing: 1px;
+}
+
+.flight-photo-credit {
+    padding: 6px 12px;
+
+    color: var(--muted);
+    font-size: 9px;
+    letter-spacing: 0.5px;
+}
+
+.flight-photo-credit a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+.flight-photo-credit a:hover {
+    text-decoration: underline;
+}
