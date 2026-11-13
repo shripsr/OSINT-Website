@@ -1,6 +1,6 @@
 # Private keys / account details - never commit these
+.env*
+!.env.example
 config.js
-credentials.json
-api-credentials.json
 opensky-credentials.json
 __pycache__/

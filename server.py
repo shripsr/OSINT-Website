@@ -25,8 +25,37 @@ import urllib.request
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
-PORT = int(os.environ.get("PORT", "8080"))
 ROOT = os.path.dirname(os.path.abspath(__file__))
+
+
+def load_dotenv(path):
+    """Read KEY=VALUE lines from a .env file into os.environ (no packages
+    needed). Real environment variables win over the file."""
+    try:
+        with open(path, encoding="utf-8-sig") as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        return   # no .env file: fine, everything is optional
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[7:]
+        key, value = line.split("=", 1)
+        key, value = key.strip(), value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]          # KEY="value" or KEY='value'
+        elif " #" in value:
+            value = value.split(" #", 1)[0].rstrip()   # KEY=value  # comment
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+# Keys and settings live in .env next to this file (git-ignored, never served)
+load_dotenv(os.path.join(ROOT, ".env"))
+
+PORT = int(os.environ.get("PORT", "8080"))
 
 UPSTREAMS = [
     lambda la, lo, d: f"https://opendata.adsb.fi/api/v2/lat/{la}/lon/{lo}/dist/{d}",
@@ -113,9 +142,9 @@ def get_photo(kind, value):
 # This relay enforces that spacing no matter how often the browser asks.
 #
 # For the faster rate, create a free account at opensky-network.org, make an
-# API client on the account page, and either save the downloaded file in this
-# folder as  opensky-credentials.json  (or credentials.json), or set the
-# OPENSKY_CLIENT_ID and OPENSKY_CLIENT_SECRET environment variables.
+# API client on the account page, and put its details in .env:
+#     OPENSKY_CLIENT_ID=...
+#     OPENSKY_CLIENT_SECRET=...
 # ----------------------------------------------
 
 # extended=1 adds each aircraft's category (light / heavy / helicopter / ...),
@@ -128,21 +157,9 @@ OPENSKY_TOKEN_URL = os.environ.get(
 
 
 def load_opensky_credentials():
-    env_id = os.environ.get("OPENSKY_CLIENT_ID")
-    env_secret = os.environ.get("OPENSKY_CLIENT_SECRET")
-    if env_id and env_secret:
-        return env_id, env_secret
-    for name in ("opensky-credentials.json", "credentials.json"):
-        try:
-            with open(os.path.join(ROOT, name), encoding="utf-8") as handle:
-                data = json.load(handle)
-            client_id = data.get("clientId") or data.get("client_id")
-            secret = data.get("clientSecret") or data.get("client_secret")
-            if client_id and secret:
-                return client_id, secret
-        except Exception:  # noqa: BLE001
-            continue  # missing or unreadable: try the next one
-    return None
+    client_id = os.environ.get("OPENSKY_CLIENT_ID", "").strip()
+    secret = os.environ.get("OPENSKY_CLIENT_SECRET", "").strip()
+    return (client_id, secret) if client_id and secret else None
 
 
 OPENSKY_CREDENTIALS = load_opensky_credentials()
@@ -402,28 +419,14 @@ def get_flight_route(callsign):
 #   - each aircraft is cached for 30 minutes (15 if AirLabs had nothing)
 #   - if the key is wrong or the quota is used up, AirLabs is skipped for an hour
 #
-# Get a free key at https://airlabs.co, then either set the AIRLABS_API_KEY
-# environment variable or put it in  api-credentials.json  next to this file:
-#     { "airlabsApiKey": "YOUR_KEY" }
-# (that file is git-ignored and never served to the browser).
+# Get a free key at https://airlabs.co and put it in .env:
+#     AIRLABS_API_KEY=...
+# Without it, AirLabs is simply skipped.
 # ----------------------------------------------
 
 AIRLABS_URL = os.environ.get("AIRLABS_URL", "https://airlabs.co/api/v9")
 
-
-def load_airlabs_key():
-    key = os.environ.get("AIRLABS_API_KEY")
-    if key:
-        return key.strip()
-    try:
-        with open(os.path.join(ROOT, "api-credentials.json"), encoding="utf-8") as handle:
-            data = json.load(handle)
-        return _clean_text(data.get("airlabsApiKey"))
-    except Exception:  # noqa: BLE001
-        return ""      # missing or unreadable: AirLabs stays off
-
-
-AIRLABS_API_KEY = load_airlabs_key()
+AIRLABS_API_KEY = os.environ.get("AIRLABS_API_KEY", "").strip()
 
 _airlabs_lock = threading.Lock()
 _airlabs = {"cache": {}, "blocked_until": 0.0}
@@ -877,5 +880,5 @@ if __name__ == "__main__":
           "Add credentials for 90 s.")
     print("Routes: AirLabs key found (used for the aircraft you click), then adsbdb"
           if AIRLABS_API_KEY else
-          "Routes: adsbdb only. Add an AirLabs key to api-credentials.json for better routes.")
+          "Routes: adsbdb only. Add AIRLABS_API_KEY to .env for better routes.")
     server.serve_forever()
