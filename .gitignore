@@ -1,0 +1,6 @@
+# Private keys / account details - never commit these
+config.js
+credentials.json
+api-credentials.json
+opensky-credentials.json
+__pycache__/

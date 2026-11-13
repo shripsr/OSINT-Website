@@ -10,9 +10,7 @@
 // 1. CONFIGURATION
 // ==============================================
 
-// Enter your CARTO API key here.
-
-const CARTO_API_KEY = "";
+const CARTO_API_KEY = CONFIG.CARTO_API_KEY;
 
 const CARTO_STYLE_URL = (style) =>
     `https://basemaps.cartocdn.com/gl/${style}-gl-style/style.json?key=${encodeURIComponent(CARTO_API_KEY)}`;
@@ -30,7 +28,19 @@ let selectedMarkerId = null;
 let savedMarkers = [];
 const markerRegistry = new Map();
 
-let currentMapStyle = "dark";
+const MAP_STYLE_KEY = "osint_map_base_style";
+
+// Last base map the user picked (dark / voyager / satellite)
+function loadSavedMapStyle() {
+    try {
+        const saved = localStorage.getItem(MAP_STYLE_KEY);
+        return ["dark", "voyager", "satellite"].includes(saved) ? saved : "dark";
+    } catch (error) {
+        return "dark";
+    }
+}
+
+let currentMapStyle = loadSavedMapStyle();
 
 let searchInProgress = false;
 let lastSearchTime = 0;
@@ -118,11 +128,14 @@ function initializeMap() {
 
     try {
 
+        // Browsers restore the dropdown on refresh; keep it matching the map
+        $("mapStyleSelect").value = currentMapStyle;
+
         map = new maplibregl.Map({
 
             container: "map",
 
-            style: getMapStyle("dark"),
+            style: getMapStyle(currentMapStyle),
 
             center: [0, 20],
 
@@ -468,7 +481,7 @@ async function searchLocation() {
 
     // FLIGHT LOOKUP (callsign, registration or ICAO hex of a tracked aircraft)
 
-    if (searchFlights(input)) {
+    if (await searchFlights(input)) {
 
         searchSuggestions.classList.remove("active");
 
@@ -954,6 +967,12 @@ $("mapStyleSelect").addEventListener("change", function() {
 
 
     currentMapStyle = newStyle;
+
+    try {
+        localStorage.setItem(MAP_STYLE_KEY, newStyle);
+    } catch (error) {
+        // storage unavailable: the choice just won't persist
+    }
 
 
     mapLoading.classList.remove("hidden");

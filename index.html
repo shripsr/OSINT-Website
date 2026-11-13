@@ -7,6 +7,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
     <title>OSINT MAP | Intelligence Platform</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
 
     <!-- MapLibre -->
     <link
@@ -270,6 +271,32 @@
 
                 <div class="flight-badges" id="fBadges"></div>
 
+                <div class="flight-route" id="fRoute" style="display:none">
+
+                    <div class="flight-route-ends">
+
+                        <div class="flight-route-end">
+                            <div class="flight-route-code" id="fRouteFrom">--</div>
+                            <div class="flight-route-name" id="fRouteFromName"></div>
+                        </div>
+
+                        <div class="flight-route-plane">&#9992;&#xFE0E;</div>
+
+                        <div class="flight-route-end right">
+                            <div class="flight-route-code" id="fRouteTo">--</div>
+                            <div class="flight-route-name" id="fRouteToName"></div>
+                        </div>
+
+                    </div>
+
+                    <div class="flight-route-track">
+                        <div class="flight-route-bar" id="fRouteBar"></div>
+                    </div>
+
+                    <div class="flight-route-info" id="fRouteInfo"></div>
+
+                </div>
+
                 <div class="flight-grid">
 
                     <div class="flight-cell wide">
@@ -313,7 +340,7 @@
                     </div>
 
                     <div class="flight-cell wide">
-                        <div class="data-label">OPERATOR</div>
+                        <div class="data-label" id="fOperatorLabel">OPERATOR</div>
                         <div class="data-value" id="fOperator">--</div>
                     </div>
 
@@ -323,6 +350,8 @@
                     </div>
 
                 </div>
+
+                <div class="flight-trail-note" id="fTrailNote"></div>
 
                 <button id="followFlight" class="primary-button">
                     FOLLOW AIRCRAFT
@@ -341,6 +370,47 @@
                 >
                     OPEN IN ADS-B EXCHANGE
                 </a>
+
+            </div>
+
+        </div>
+
+
+        <!-- AIRPORT: live arrivals / departures -->
+
+        <div class="flight-panel airport-panel" id="airportPanel">
+
+            <div class="panel-header">
+
+                <span>AIRPORT</span>
+
+                <button id="closeAirportPanel">×</button>
+
+            </div>
+
+            <div class="panel-content">
+
+                <div class="flight-callsign" id="airportCode">--</div>
+
+                <div class="flight-subtitle" id="airportName">--</div>
+
+                <div class="flight-subtitle" id="airportSub"></div>
+
+                <div class="airport-tabs">
+                    <button id="airportTabArrivals" class="airport-tab active">ARRIVALS</button>
+                    <button id="airportTabDepartures" class="airport-tab">DEPARTURES</button>
+                </div>
+
+                <div class="airport-list" id="airportList"></div>
+
+                <div class="airport-empty" id="airportEmpty"></div>
+
+                <div class="airport-note">
+                    Live aircraft near the airport, not a timetable. Flights
+                    marked EST. are guessed from altitude, climb and heading;
+                    the others use the callsign's known route. Click a row
+                    to follow the aircraft.
+                </div>
 
             </div>
 
@@ -418,6 +488,7 @@
 
     <!-- MAIN SCRIPT -->
 
+    <script src="config.js"></script>
     <script src="script.js"></script>
 
 </body>
