@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2021",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "es2022",
+    "moduleDetection": "legacy",
+    "rootDir": "src",
+    "outDir": ".",
+    "strict": true,
+    "noImplicitAny": true,
+    "noUnusedLocals": false,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
+    "removeComments": false,
+    "newLine": "lf",
+    "types": []
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules"]
+}

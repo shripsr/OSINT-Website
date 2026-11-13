@@ -1,0 +1,14 @@
+{
+  "name": "osint-website",
+  "private": true,
+  "description": "OSINT map - TypeScript sources in src/, compiled to flights.js and script.js",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "maplibre-gl": "^5.6.2",
+    "typescript": "^7.0.2"
+  }
+}
