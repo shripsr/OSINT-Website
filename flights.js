@@ -362,6 +362,56 @@ function parseAircraft(a, receivedAt) {
     };
 }
 
+// ----- aircraft details that the OpenSky world feed doesn't have -----
+// The regional feed (zoomed in) knows each aircraft's registration, type
+// and operator; OpenSky (zoomed out) doesn't. Remember them per aircraft so
+// they survive the switch between the two feeds.
+
+const FLIGHT_DETAILS_MAX = 20000;
+const flightKnownDetails = new Map();   // hex -> { reg, type, typeDesc, operator, military }
+
+function rememberFlightDetails(rec) {
+
+    if (!rec || !rec.hex) return;
+
+    const old = flightKnownDetails.get(rec.hex) || {};
+
+    const details = {
+        reg: rec.reg || old.reg || "",
+        type: rec.type || old.type || "",
+        typeDesc: rec.typeDesc || old.typeDesc || "",
+        operator: rec.operator || old.operator || "",
+        military: rec.military || old.military || false
+    };
+
+    if (!details.reg && !details.type && !details.typeDesc &&
+        !details.operator && !details.military) return;
+
+    // Re-insert so the Map stays ordered oldest -> newest, then trim the oldest
+    flightKnownDetails.delete(rec.hex);
+    flightKnownDetails.set(rec.hex, details);
+
+    if (flightKnownDetails.size > FLIGHT_DETAILS_MAX) {
+        flightKnownDetails.delete(flightKnownDetails.keys().next().value);
+    }
+}
+
+// Fills blank fields of a record from what we remembered (keeps any new value)
+function applyKnownDetails(rec) {
+
+    const known = rec && flightKnownDetails.get(rec.hex);
+
+    if (!known) return rec;
+
+    if (!rec.reg) rec.reg = known.reg;
+    if (!rec.type) rec.type = known.type;
+    if (!rec.typeDesc) rec.typeDesc = known.typeDesc;
+    if (!rec.operator) rec.operator = known.operator;
+    if (known.military) rec.military = true;
+
+    return rec;
+}
+
 function flightColorKey(rec) {
     if (rec.emergency) return "emergency";
     if (rec.military) return "military";
@@ -1253,6 +1303,11 @@ async function refreshFlights() {
 
                 if (!rec) return;
 
+                // Keep reg / type / operator for when we zoom out to OpenSky,
+                // and fill gaps this feed left from what an earlier one said
+                rememberFlightDetails(rec);
+                applyKnownDetails(rec);
+
                 const existing = next.get(rec.hex);
 
                 if (!existing || rec.t0 > existing.t0) {
@@ -1411,7 +1466,8 @@ function parseWorldPayload(payload) {
 
         const rec = parseOpenSkyState(state, fetchedAt, snapshot, cap);
 
-        if (rec) next.set(rec.hex, rec);
+        // OpenSky has no registration / type: reuse what the regional feed told us
+        if (rec) next.set(rec.hex, applyKnownDetails(rec));
 
     });
 
@@ -3078,8 +3134,208 @@ function looksLikeRegistration(q) {
     return /^[a-z0-9]{1,2}-?[a-z0-9]{2,6}$/i.test(q) && /[0-9-]/.test(q);
 }
 
-// Search box: jump to a tracked aircraft by callsign, registration or ICAO hex.
-// Resolves to true if it handled the search.
+// ----- airports in the search box -----
+
+function normaliseSearchText(text) {
+    return String(text || "")
+        .normalize("NFD").replace(/[̀-ͯ]/g, "")   // Málaga -> Malaga
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim();
+}
+
+// Airports whose code, name or city contain every word of the query,
+// best match first (exact code, then big airports, then shorter names).
+function flightAirportMatches(query, max) {
+
+    const q = normaliseSearchText(query);
+
+    if (!flightsEnabled || q.length < 3 || !flightAirportIndex.size) return [];
+
+    const words = q.split(" ");
+
+    const found = [];
+
+    flightAirportIndex.forEach(function(a) {
+
+        if (!a.searchText) {
+            a.searchText = normaliseSearchText([a.iata, a.icao, a.name, a.city].join(" "));
+        }
+
+        const code = q === a.iata.toLowerCase() || q === a.icao.toLowerCase();
+
+        if (!code && !words.every(w => a.searchText.includes(w))) return;
+
+        found.push({
+            airport: a,
+            score: (code ? 0 : 10) + (a.kind === "L" ? 0 : 5) + a.name.length / 100
+        });
+    });
+
+    found.sort((x, y) => x.score - y.score);
+
+    return found.slice(0, max || 3).map(f => f.airport);
+}
+
+// What pressing Enter should open: an exact airport code ("BOS", "EGLL"),
+// or a name search that says "airport" ("heathrow airport"). Plain place
+// names like "Boston" still go to the normal location search.
+function findAirportByQuery(query) {
+
+    const q = normaliseSearchText(query);
+
+    if (!flightsEnabled || q.length < 3) return null;
+
+    for (const a of flightAirportIndex.values()) {
+        if (q === a.iata.toLowerCase() || q === a.icao.toLowerCase()) return a;
+    }
+
+    if (!/\bairport\b/.test(q)) return null;
+
+    const rest = q.replace(/\b(airport|international|intl)\b/g, " ").trim();
+
+    return rest.length >= 3 ? flightAirportMatches(rest, 1)[0] || null : null;
+}
+
+// Opens the airport panel exactly as if its pin had been clicked
+function openAirportFromSearch(airport) {
+
+    if (!airport || !flightsEnabled) return false;
+
+    selectAirport(airport.icao);
+
+    return true;
+}
+
+// The airport pin closest to a point (within a few km), or null
+function findAirportNear(lat, lon, maxKm) {
+
+    if (!flightsEnabled) return null;
+
+    let best = null;
+    let bestKm = maxKm || 6;
+
+    flightAirportIndex.forEach(function(a) {
+
+        if (Math.abs(a.lat - lat) > 0.3) return;
+
+        const km = flightDistanceKm(lat, lon, a.lat, a.lon);
+
+        if (km < bestKm) {
+            best = a;
+            bestKm = km;
+        }
+    });
+
+    return best;
+}
+
+// For a location search that landed on an airport: open that pin's panel.
+// address = the place's address from the search, shown in the panel.
+function openAirportNear(lat, lon, address) {
+
+    const airport = findAirportNear(lat, lon);
+
+    if (airport && address) rememberAirportAddress(airport, address);
+
+    return openAirportFromSearch(airport);
+}
+
+// ----- airport street address (OpenStreetMap Nominatim) -----
+
+const airportAddressCache = new Map();   // icao -> address text ("" = none found)
+const airportAddressPending = new Set();
+
+// "Boston Logan International Airport, Harborside Drive, East Boston, ..."
+// -> drop the leading airport name, the panel already shows it
+function tidyAirportAddress(airport, displayName) {
+
+    const parts = String(displayName || "").split(",").map(p => p.trim()).filter(Boolean);
+
+    if (parts.length > 1) {
+
+        const first = normaliseSearchText(parts[0]);
+        const name = normaliseSearchText(airport.name);
+
+        if (first === name || /\b(airport|aeropuerto|aeroport|aeroporto|flughafen)\b/.test(first)) {
+            parts.shift();
+        }
+    }
+
+    return parts.join(", ");
+}
+
+function rememberAirportAddress(airport, displayName) {
+
+    const address = tidyAirportAddress(airport, displayName);
+
+    if (!address) return;
+
+    airportAddressCache.set(airport.icao, address);
+
+    if (selectedAirport && selectedAirport.icao === airport.icao) {
+        setFlightText("airportAddress", address);
+    }
+}
+
+// Looks the address up once per airport: by name first (must land near the
+// pin), otherwise whatever is at the pin itself.
+async function loadAirportAddress(airport) {
+
+    if (airportAddressCache.has(airport.icao) || airportAddressPending.has(airport.icao)) return;
+
+    airportAddressPending.add(airport.icao);
+
+    const base = "https://nominatim.openstreetmap.org";
+    const options = { headers: { "Accept": "application/json" } };
+
+    let address = "";
+
+    try {
+
+        const byName = await fetch(
+            `${base}/search?format=jsonv2&limit=3&q=${encodeURIComponent(airport.name)}`,
+            options
+        );
+
+        const results = byName.ok ? await byName.json() : [];
+
+        const match = results.find(r =>
+            flightDistanceKm(Number(r.lat), Number(r.lon), airport.lat, airport.lon) < 10);
+
+        if (match) {
+
+            address = tidyAirportAddress(airport, match.display_name);
+
+        } else {
+
+            const atPin = await fetch(
+                `${base}/reverse?format=jsonv2&zoom=16&lat=${airport.lat}&lon=${airport.lon}`,
+                options
+            );
+
+            const place = atPin.ok ? await atPin.json() : null;
+
+            if (place && place.display_name) {
+                address = tidyAirportAddress(airport, place.display_name);
+            }
+        }
+
+        airportAddressCache.set(airport.icao, address);
+
+    } catch (error) {
+        // Lookup failed: leave it uncached so opening the airport again retries
+    } finally {
+        airportAddressPending.delete(airport.icao);
+    }
+
+    if (address && selectedAirport && selectedAirport.icao === airport.icao) {
+        setFlightText("airportAddress", address);
+    }
+}
+
+// Search box: jump to a tracked aircraft by callsign, registration or ICAO hex,
+// or open an airport. Resolves to true if it handled the search.
 async function searchFlights(query) {
 
     if (!flightsEnabled) return false;
@@ -3110,7 +3366,12 @@ async function searchFlights(query) {
     }
 
 
-    // 2. A registration: ask adsbdb which aircraft it belongs to
+    // 2. An airport code, or a name with the word "airport"
+
+    if (openAirportFromSearch(findAirportByQuery(q))) return true;
+
+
+    // 3. A registration: ask adsbdb which aircraft it belongs to
 
     if (!looksLikeRegistration(q)) return false;
 
@@ -3381,6 +3642,10 @@ function selectAirport(icao) {
 
     deselectFlight();
 
+    // The airport panel and the location panel share the left side:
+    // opening an airport closes the location (and removes its unsaved marker)
+    if (typeof clearSelection === "function") clearSelection();
+
     selectedAirport = airport;
 
     airportTab = "arrivals";
@@ -3389,12 +3654,23 @@ function selectAirport(icao) {
 
     if (list) list.textContent = "";
 
+    ["airportSchedule", "airportEarlier"].forEach(function(id) {
+        const element = flightEl(id);
+        if (element) element.textContent = "";
+    });
+
+    airportScheduleDrawn = "";
+
     setFlightText("airportCode", airportCode(airport));
     setFlightText("airportName", airport.name);
     setFlightText(
         "airportSub",
         [airport.city, airport.country].filter(Boolean).join(", ") + "  ·  " + airport.icao
     );
+
+    setFlightText("airportAddress", airportAddressCache.get(airport.icao) || "");
+
+    loadAirportAddress(airport);   // fills it in if we don't have it yet
 
     flightEl("airportPanel").classList.add("visible");
 
@@ -3557,9 +3833,306 @@ function airportRowText(row, arriving) {
     };
 }
 
+// ----- scheduled flights for the next hour (AirLabs timetable, via the relay) -----
+
+const FLIGHT_SCHEDULE_PATH = "/api/schedule";
+const SCHEDULE_REFRESH_MS = 15 * 60000;   // matches the relay's cache
+const SCHEDULE_RETRY_MS = 3 * 60000;
+
+const airportScheduleCache = new Map();   // "KBOS|arrivals" -> { state, rows, partial, at }
+let airportScheduleDrawn = "";
+
+async function loadAirportSchedule(airport, kind) {
+
+    const key = airport.icao + "|" + kind;
+
+    const entry = airportScheduleCache.get(key);
+
+    if (entry) {
+        if (entry.state === "loading") return;
+        const wait = entry.state === "ok" ? SCHEDULE_REFRESH_MS : SCHEDULE_RETRY_MS;
+        if (entry.state === "nokey" || Date.now() - entry.at < wait) return;
+    }
+
+    airportScheduleCache.set(key, {
+        state: "loading",
+        rows: entry ? entry.rows : [],
+        partial: entry ? entry.partial : false,
+        at: Date.now()
+    });
+
+    let result;
+
+    try {
+
+        const response = await fetch(
+            `${FLIGHT_SCHEDULE_PATH}?airport=${encodeURIComponent(airport.icao)}&kind=${kind}`,
+            { cache: "no-store" }
+        );
+
+        if (response.status === 404) {
+            result = { state: "unavailable" };
+        } else if (!response.ok) {
+            result = { state: "error" };
+        } else {
+            const data = await response.json();
+            result = data && data.found
+                ? { state: "ok", rows: data.rows || [], partial: Boolean(data.partial) }
+                : { state: (data && data.reason) || "error" };   // "nokey" | "limit"
+        }
+
+    } catch (error) {
+        result = { state: "error" };
+    }
+
+    const old = airportScheduleCache.get(key) || {};
+
+    airportScheduleCache.set(key, {
+        state: result.state,
+        rows: result.rows || old.rows || [],
+        partial: result.partial || false,
+        at: Date.now()
+    });
+
+    airportScheduleDrawn = "";
+
+    if (selectedAirport && selectedAirport.icao === airport.icao) {
+        updateAirportPanel(Date.now());
+    }
+}
+
+// Live aircraft by callsign, so timetable rows can link to planes on the map
+function liveAircraftByCallsign() {
+
+    const index = new Map();
+
+    flightStore.forEach(function(rec) {
+        const callsign = String(rec.callsign || "").trim().toUpperCase();
+        if (callsign) index.set(callsign, rec.hex);
+    });
+
+    return index;
+}
+
+function scheduleRowParts(row, arriving, now) {
+
+    const status = (row.status || "").toLowerCase();
+
+    const place = [row.other, row.otherCity].filter(Boolean).join(" ");
+
+    const title = `${row.time || "--:--"}  ${row.flight || "?"}` +
+        (place ? `   ${arriving ? "from" : "to"} ${place}` : "");
+
+    const bits = [];
+
+    if (row.estTime && row.estTime !== row.time) {
+        bits.push({ text: `${status === "landed" || status === "active" ? "Actual" : "Est."} ${row.estTime}` });
+    }
+
+    if (row.delay) bits.push({ text: `+${row.delay} min`, cls: "delay" });
+
+    if (row.bestTs && status === "scheduled") {
+        const mins = Math.round((row.bestTs * 1000 - now) / 60000);
+        if (mins > 0) bits.push({ text: `in ${mins} min` });
+    }
+
+    if (row.terminal) bits.push({ text: `Term ${row.terminal}` });
+    if (row.gate) bits.push({ text: `Gate ${row.gate}` });
+    if (row.aircraft) bits.push({ text: row.aircraft });
+
+    const label = {
+        scheduled: "SCHEDULED",
+        active: arriving ? "IN THE AIR" : "DEPARTED",
+        landed: "LANDED",
+        cancelled: "CANCELLED",
+        diverted: "DIVERTED"
+    }[status] || status.toUpperCase();
+
+    if (label) {
+        bits.push({
+            text: label,
+            cls: status === "cancelled" || status === "diverted" ? "bad" : ""
+        });
+    }
+
+    return { title: title, bits: bits, cancelled: status === "cancelled" };
+}
+
+// Has this flight already left / landed (or been cancelled)?
+function scheduleRowIsPast(row, arriving, now) {
+
+    const status = (row.status || "").toLowerCase();
+
+    if (status === "landed" || status === "cancelled" || status === "diverted") return true;
+
+    // "active" = in the air: done for departures, still coming for arrivals
+    if (status === "active") return !arriving;
+
+    // No update and well past its time: treat as earlier
+    return Boolean(row.bestTs) && row.bestTs * 1000 < now - 15 * 60000;
+}
+
+function buildScheduleRow(row, arriving, now, live, past) {
+
+    const parts = scheduleRowParts(row, arriving, now);
+
+    if (past && row.bestTs) {
+        const mins = Math.round((now - row.bestTs * 1000) / 60000);
+        if (mins > 0) {
+            parts.bits.splice(parts.bits.length - 1, 0, {
+                text: mins >= 60 ? `${Math.floor(mins / 60)} h ${mins % 60} min ago` : `${mins} min ago`
+            });
+        }
+    }
+
+    const hex = live.get((row.callsign || "").toUpperCase());
+
+    const element = document.createElement(hex ? "button" : "div");
+
+    element.className = "airport-row schedule" +
+        (hex ? " live" : "") + (parts.cancelled ? " cancelled" : "");
+
+    if (hex) element.dataset.hex = hex;
+
+    const main = document.createElement("div");
+    main.className = "airport-row-main";
+    main.textContent = parts.title;
+
+    const detail = document.createElement("div");
+    detail.className = "airport-row-detail";
+
+    const bits = hex ? parts.bits.concat([{ text: "LIVE", cls: "live-tag" }]) : parts.bits;
+
+    bits.forEach(function(bit, i) {
+        if (i) detail.appendChild(document.createTextNode("  ·  "));
+        const span = document.createElement("span");
+        span.textContent = bit.text;
+        if (bit.cls) span.className = bit.cls;
+        detail.appendChild(span);
+    });
+
+    element.appendChild(main);
+    element.appendChild(detail);
+
+    return element;
+}
+
+function setScheduleMessage(id, message) {
+
+    const element = flightEl(id);
+
+    if (!element) return;
+
+    element.style.display = message ? "block" : "none";
+    element.textContent = message;
+}
+
+function renderAirportSchedule(now) {
+
+    const list = flightEl("airportSchedule");
+    const earlierList = flightEl("airportEarlier");
+
+    if (!list || !earlierList || !selectedAirport) return;
+
+    const arriving = airportTab === "arrivals";
+    const kind = arriving ? "arrivals" : "departures";
+
+    loadAirportSchedule(selectedAirport, kind);   // no-op while cached
+
+    const entry = airportScheduleCache.get(selectedAirport.icao + "|" + kind) ||
+        { state: "loading", rows: [] };
+
+    // Split into still-to-come (soonest first) and earlier (most recent first)
+    const upcoming = [];
+    const earlier = [];
+
+    entry.rows.forEach(function(row) {
+        if (scheduleRowIsPast(row, arriving, now)) earlier.push(row);
+        else if (!row.bestTs || row.bestTs * 1000 <= now + 60 * 60000) upcoming.push(row);
+    });
+
+    earlier.sort((a, b) => (b.bestTs || 0) - (a.bestTs || 0));
+
+    const live = liveAircraftByCallsign();
+
+    // Only rebuild when something visible changed (times shown per minute)
+    const signature = [
+        selectedAirport.icao, kind, entry.state, entry.at, Math.floor(now / 60000),
+        entry.rows.map(r => (live.get((r.callsign || "").toUpperCase()) || "")).join(",")
+    ].join("|");
+
+    if (signature === airportScheduleDrawn) return;
+
+    airportScheduleDrawn = signature;
+
+    const ok = entry.state === "ok";
+    const word = arriving ? "ARRIVALS" : "DEPARTURES";
+
+    setFlightText("airportScheduleTitle",
+        `SCHEDULED ${word} · NEXT HOUR` + (ok ? ` (${upcoming.length})` : ""));
+
+    setFlightText("airportEarlierTitle",
+        `EARLIER ${word}` + (ok ? ` (${earlier.length})` : ""));
+
+    list.textContent = "";
+    earlierList.textContent = "";
+
+    upcoming.forEach(row => list.appendChild(buildScheduleRow(row, arriving, now, live, false)));
+    earlier.forEach(row => earlierList.appendChild(buildScheduleRow(row, arriving, now, live, true)));
+
+    // ---- messages ----
+    const messages = {
+        loading: "Loading the timetable...",
+        nokey: "Add AIRLABS_API_KEY to .env (and restart server.py) to see scheduled flights.",
+        limit: "AirLabs limit reached or key rejected. Trying again later.",
+        unavailable: "Scheduled flights need the Python relay (server.py).",
+        error: "Couldn't load the timetable. Trying again in a few minutes."
+    };
+
+    let upcomingMessage = "";
+
+    if (!ok) {
+        upcomingMessage = entry.rows.length ? "" : messages[entry.state] || "";
+    } else if (entry.partial) {
+        // Busy hub: the free plan's 100 rows ran out before the hour did
+        upcomingMessage = upcoming.length
+            ? "Busy airport: AirLabs' free plan only returns 100 flights, so later ones in this hour are missing."
+            : "Busy airport: AirLabs' free plan only returns its first 100 flights, and here they're all earlier than now (see below). The live list above still works.";
+    } else if (!upcoming.length) {
+        upcomingMessage = `No scheduled ${kind} in the next hour.`;
+    }
+
+    setScheduleMessage("airportScheduleEmpty", upcomingMessage);
+
+    setScheduleMessage(
+        "airportEarlierEmpty",
+        ok && !earlier.length ? `No earlier ${kind} in AirLabs' list.` : ""
+    );
+}
+
+// Fly to a live aircraft and open its panel (used by both airport lists)
+function followAircraftFromAirport(hex) {
+
+    const rec = flightStore.get(hex);
+
+    if (!rec) return;
+
+    const pos = predictPosition(rec, Date.now());
+
+    map.flyTo({
+        center: [pos.lon, pos.lat],
+        zoom: Math.max(map.getZoom(), 9),
+        essential: true
+    });
+
+    selectFlight(rec.hex);
+}
+
 function updateAirportPanel(now) {
 
     if (!selectedAirport) return;
+
+    renderAirportSchedule(now);
 
     const traffic = computeAirportTraffic(selectedAirport, now);
 
@@ -3666,27 +4239,18 @@ function initializeAirportPanel() {
 
         });
 
-    const list = flightEl("airportList");
+    // Live list and timetable: clicking a row with an aircraft follows it
+    ["airportList", "airportSchedule", "airportEarlier"].forEach(function(id) {
 
-    if (list) list.addEventListener("click", function(event) {
+        const element = flightEl(id);
 
-        const row = event.target.closest && event.target.closest(".airport-row");
+        if (element) element.addEventListener("click", function(event) {
 
-        if (!row) return;
+            const row = event.target.closest && event.target.closest(".airport-row");
 
-        const rec = flightStore.get(row.dataset.hex);
+            if (row && row.dataset.hex) followAircraftFromAirport(row.dataset.hex);
 
-        if (!rec) return;
-
-        const pos = predictPosition(rec, Date.now());
-
-        map.flyTo({
-            center: [pos.lon, pos.lat],
-            zoom: Math.max(map.getZoom(), 9),
-            essential: true
         });
-
-        selectFlight(rec.hex);
 
     });
 

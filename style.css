@@ -421,7 +421,7 @@ body {
 
     position: absolute;
 
-    right: 20px;
+    left: 20px;
     top: 20px;
 
     width: 280px;
@@ -439,6 +439,11 @@ body {
 
 .inspection-panel.visible {
     display: block;
+}
+
+/* Flight details also sit on the left: put the location panel beside them */
+body:has(#flightPanel.visible) .inspection-panel {
+    left: 300px;
 }
 
 .panel-header {
@@ -510,6 +515,57 @@ body {
 .description-input {
     min-height: 85px;
     resize: vertical;
+}
+
+/* Location name: looks like the airport panel's title, but can be clicked
+   and renamed. Wraps and grows to fit its text. */
+.location-title {
+    display: block;
+    width: 100%;
+
+    margin: 0;
+    padding: 0 0 3px;
+
+    background: transparent;
+    color: var(--accent);
+
+    border: none;
+    border-bottom: 1px solid transparent;
+    outline: none;
+
+    font-family: monospace;
+    font-size: 18px;
+    font-weight: bold;
+    letter-spacing: 0.5px;
+    line-height: 1.3;
+
+    resize: none;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+}
+
+.location-title::placeholder {
+    color: var(--muted);
+}
+
+.location-title:hover {
+    border-bottom-color: var(--border);
+}
+
+.location-title:focus {
+    border-bottom-color: var(--accent);
+}
+
+#inspectAddress {
+    line-height: 1.4;
+}
+
+#inspectAddress:empty {
+    display: none;
+}
+
+#inspectCoords {
+    font-family: monospace;
 }
 
 .primary-button,
@@ -657,8 +713,14 @@ body {
 
     .inspection-panel {
         width: 240px;
-        right: 8px;
+        left: 8px;
         top: 8px;
+    }
+
+    /* No room for two panels side by side: go to the right edge instead */
+    body:has(#flightPanel.visible) .inspection-panel {
+        left: auto;
+        right: 8px;
     }
 }
 
@@ -1249,4 +1311,56 @@ body {
     color: var(--muted);
     font-size: 9px;
     line-height: 1.4;
+}
+
+.airport-address {
+    margin-top: 4px;
+
+    font-size: 10px;
+    line-height: 1.4;
+}
+
+.airport-address:empty {
+    display: none;
+}
+
+/* Scheduled flights (AirLabs timetable) */
+
+.airport-section-title {
+    margin: 18px 0 8px;
+    padding-top: 12px;
+
+    border-top: 1px solid var(--border);
+    color: var(--accent);
+    font-size: 10px;
+    letter-spacing: 0.5px;
+}
+
+.airport-row.schedule {
+    cursor: default;
+}
+
+.airport-row.schedule.live {
+    cursor: pointer;
+}
+
+.airport-row.schedule:not(.live):hover {
+    border-color: rgba(255, 255, 255, 0.08);
+}
+
+.airport-row.cancelled .airport-row-main {
+    text-decoration: line-through;
+    opacity: 0.6;
+}
+
+.airport-row .delay {
+    color: #ffb300;
+}
+
+.airport-row .bad {
+    color: #ff5c5c;
+}
+
+.airport-row .live-tag {
+    color: var(--accent);
 }

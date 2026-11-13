@@ -355,7 +355,32 @@ function updateMouseCoordinates(e) {
 // 8. LOCATION INSPECTION
 // ==============================================
 
-function inspectLocation(lat, lon, name = "", description = "", id = null) {
+// The location name box grows to fit its text (a full address wraps onto
+// several lines instead of scrolling sideways).
+function autoSizeMarkerName() {
+
+    const box = $("markerName");
+
+    box.style.height = "auto";
+    box.style.height = (box.scrollHeight + 2) + "px";
+}
+
+$("markerName").addEventListener("input", autoSizeMarkerName);
+
+// It's a name, not a note: Enter doesn't add a line break
+$("markerName").addEventListener("keydown", function(e) {
+    if (e.key === "Enter") e.preventDefault();
+});
+
+
+// Address shown under the name (rest of a searched address); saved with the marker
+let currentInspectAddress = "";
+
+function inspectLocation(lat, lon, name = "", description = "", id = null, address = "") {
+
+    // The location panel and the airport panel share the left side:
+    // opening a location closes the airport
+    if (typeof closeAirportPanel === "function") closeAirportPanel();
 
     // Remove only the previous temporary marker.
     // Never remove a permanently saved marker.
@@ -380,13 +405,22 @@ function inspectLocation(lat, lon, name = "", description = "", id = null) {
     $("markerName").value = name;
     $("markerDescription").value = description;
 
-    $("inspectLat").innerText = lat.toFixed(6);
-    $("inspectLon").innerText = lon.toFixed(6);
+    // A saved location keeps the address it was saved with
+    if (!address && id) {
+        const saved = savedMarkers.find(item => item.id === id);
+        if (saved && saved.address) address = saved.address;
+    }
+
+    currentInspectAddress = address;
+
+    $("inspectAddress").innerText = address;
 
     $("inspectCoords").innerText =
-        `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+        `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
 
     inspectionPanel.classList.add("visible");
+
+    autoSizeMarkerName();   // after the panel is visible, so it can be measured
 
     $("deleteMarker").style.display =
         id ? "block" : "none";
@@ -551,6 +585,21 @@ async function searchLocation() {
         const lon = Number(result.lon);
 
 
+        // The place found is an airport (e.g. "heathrow"): open its
+        // arrivals / departures panel, as if the pin had been clicked
+
+        const isAirport =
+            (result.category || result.class) === "aeroway" &&
+            result.type === "aerodrome";
+
+        if (isAirport && typeof openAirportNear === "function" &&
+            openAirportNear(lat, lon, result.display_name)) {
+
+            return;
+
+        }
+
+
         map.flyTo({
 
             center: [lon, lat],
@@ -562,10 +611,17 @@ async function searchLocation() {
         });
 
 
+        // "1 Harborside Drive, East Boston, ..." -> title + the rest underneath
+        const addressParts = String(result.display_name || "")
+            .split(",").map(part => part.trim()).filter(Boolean);
+
         inspectLocation(
             lat,
             lon,
-            result.display_name
+            addressParts[0] || "",
+            "",
+            null,
+            addressParts.slice(1).join(", ")
         );
 
 
@@ -616,19 +672,65 @@ searchInput.addEventListener("input", function(e) {
 
     // Wait 600ms after user stops typing to protect API rate limits
     suggestionTimeout = setTimeout(async () => {
+
+        // Airports from the flight layer's own list go first; picking one
+        // opens its arrivals / departures panel
+        const airports = typeof flightAirportMatches === "function"
+            ? flightAirportMatches(query, 3)
+            : [];
+
+        const addAirportSuggestions = function() {
+            airports.forEach(airport => {
+                const item = document.createElement("div");
+                item.className = "suggestion-item";
+                item.innerText = "✈ " + (airport.iata || airport.icao) + " · " +
+                    airport.name + (airport.city ? " (" + airport.city + ")" : "");
+
+                item.addEventListener("click", () => {
+                    searchInput.value = airport.name;
+                    searchSuggestions.classList.remove("active");
+                    openAirportFromSearch(airport);
+                });
+
+                searchSuggestions.appendChild(item);
+            });
+        };
+
         try {
             const url = "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&q=" + encodeURIComponent(query);
-            
+
             const response = await fetch(url, {
                 headers: { "Accept": "application/json" }
             });
-            
-            if (!response.ok) return;
-            
-            const results = await response.json();
+
+            const found = response.ok ? await response.json() : [];
             searchSuggestions.innerHTML = "";
-            
-            if (results.length > 0) {
+
+            // A place result that is one of our airports would be a second
+            // entry for the same thing: keep only the ✈ one, and remember
+            // the place's address to show in the airport panel.
+            const results = found.filter(result => {
+
+                const isAirport =
+                    (result.category || result.class) === "aeroway" &&
+                    result.type === "aerodrome";
+
+                const airport = isAirport && typeof findAirportNear === "function"
+                    ? findAirportNear(Number(result.lat), Number(result.lon))
+                    : null;
+
+                if (!airport) return true;
+
+                if (!airports.includes(airport)) airports.push(airport);
+
+                rememberAirportAddress(airport, result.display_name);
+
+                return false;
+            });
+
+            addAirportSuggestions();
+
+            if (results.length > 0 || airports.length > 0) {
                 // Populate dropdown with results
                 results.forEach(result => {
                     const item = document.createElement("div");
@@ -651,6 +753,11 @@ searchInput.addEventListener("input", function(e) {
             }
         } catch (error) {
             console.error("Autocomplete error:", error);
+
+            // Place lookup failed: still offer the airports we know
+            searchSuggestions.innerHTML = "";
+            addAirportSuggestions();
+            searchSuggestions.classList.toggle("active", airports.length > 0);
         }
     }, 600); 
 });
@@ -869,6 +976,8 @@ $("saveMarker").addEventListener("click", function() {
         name: name,
 
         description: description,
+
+        address: currentInspectAddress,
 
         lat: position.lat,
 

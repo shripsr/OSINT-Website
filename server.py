@@ -436,8 +436,9 @@ class AirLabsOff(Exception):
     pass
 
 
-def airlabs_get(endpoint, params):
-    """One AirLabs request. Returns its "response" part, or None."""
+def airlabs_get(endpoint, params, full=False):
+    """One AirLabs request. Returns its "response" part (or, with full=True,
+    the whole reply, which also says whether there are more pages)."""
     query = urllib.parse.urlencode(dict(params, api_key=AIRLABS_API_KEY))
     request = urllib.request.Request(
         f"{AIRLABS_URL}/{endpoint}?{query}",
@@ -458,7 +459,7 @@ def airlabs_get(endpoint, params):
         message = problem.get("message") if isinstance(problem, dict) else str(problem)
         _airlabs["blocked_until"] = time.time() + 3600
         raise AirLabsOff(f"AirLabs said: {message}")
-    return data.get("response")
+    return data if full else data.get("response")
 
 
 # Airport codes -> details, from the full airports.csv (all sizes, so small
@@ -545,6 +546,120 @@ def get_airlabs_route(hex_code, callsign):
             _airlabs["cache"].clear()
         _airlabs["cache"][key] = (time.time(), route, 1800 if route else 900)
         return route
+
+
+# ----------------------------------------------
+# Airport timetables from AirLabs ("schedules"): flights due in the next hour
+#
+# There's no time filter: results start an hour or two ago, roughly in time
+# order. The free plan returns only the first 100 rows (big hubs have
+# 2,000+, and paging with offset returns nothing), so quiet and mid-size
+# airports are covered well ahead, but a busy hub's 100 rows can all be in
+# the past. Codeshares (the same plane sold under other airlines' numbers)
+# are dropped. One request per airport and direction, cached 15 minutes.
+# ----------------------------------------------
+
+SCHEDULE_AHEAD = 3600     # show flights due up to an hour from now...
+SCHEDULE_BEHIND = 3 * 3600  # ...and earlier ones (the free plan usually reaches 1-2 h back)
+SCHEDULE_TTL = 900
+
+_schedule_lock = threading.Lock()
+_schedules = {}           # (airport code, kind) -> (time, json text)
+
+
+def _hhmm(value):
+    """'2026-11-13 14:35' -> '14:35' (AirLabs local airport time)."""
+    value = _clean_text(value)
+    return value[11:16] if len(value) >= 16 else ""
+
+
+def get_airport_schedule(code, kind):
+    code = code.upper()
+    if not AIRLABS_API_KEY:
+        return json.dumps({"found": False, "reason": "nokey"})
+
+    cache_key = (code, kind)
+    with _schedule_lock:
+        hit = _schedules.get(cache_key)
+        if hit and time.time() - hit[0] < SCHEDULE_TTL:
+            return hit[1]
+        if time.time() < _airlabs["blocked_until"]:
+            return json.dumps({"found": False, "reason": "limit"})
+
+        airport = airport_by_code(code)
+        side = "dep" if kind == "departures" else "arr"
+        other = "arr" if side == "dep" else "dep"
+        if airport and airport["iata"]:
+            params = {f"{side}_iata": airport["iata"]}
+        else:
+            params = {f"{side}_icao": airport["icao"] if airport else code}
+
+        now = time.time()
+        start, end = now - SCHEDULE_BEHIND, now + SCHEDULE_AHEAD
+        ts_key = f"{side}_time_ts"
+
+        def fetch(offset):
+            """One page -> (rows, has_more, total, early time, late time)."""
+            # (offset kept for paid keys; on the free plan any offset returns nothing)
+            data = airlabs_get("schedules", dict(params, offset=offset) if offset else params,
+                               full=True)
+            batch = data.get("response") if isinstance(data, dict) else None
+            batch = [r for r in batch if isinstance(r, dict)] if isinstance(batch, list) else []
+            info = (data.get("request") or {}) if isinstance(data, dict) else {}
+            times = sorted(t for t in (_clean_number(r.get(ts_key)) for r in batch) if t)
+            # 10th / 90th percentile, so the odd out-of-order row doesn't mislead
+            early = times[len(times) // 10] if times else None
+            late = times[(len(times) * 9) // 10] if times else None
+            return batch, bool(info.get("has_more")), int(info.get("total_items") or 0), early, late
+
+        # One request. The free plan only ever returns the first 100 rows
+        # (offset paging returns nothing), and those start an hour or two in
+        # the past. A quiet airport is covered hours ahead; a busy hub may
+        # not reach the coming hour at all, which "partial" tells the page.
+        raw, more, _total, _early, late = fetch(0)
+        partial = bool(more and late and late < end)
+
+        rows, seen = [], set()
+        for r in raw:
+            if r.get("cs_flight_iata"):          # codeshare copy of another row
+                continue
+            ident = (r.get("flight_icao") or r.get("flight_iata"), r.get(f"{side}_time_ts"))
+            if ident in seen:                    # pages can overlap
+                continue
+            seen.add(ident)
+            scheduled = _clean_number(r.get(f"{side}_time_ts"))
+            estimated = _clean_number(r.get(f"{side}_estimated_ts"))
+            actual = _clean_number(r.get(f"{side}_actual_ts"))
+            best = actual or estimated or scheduled
+            if not best or not (now - SCHEDULE_BEHIND <= best <= now + SCHEDULE_AHEAD):
+                continue
+            other_code = _clean_text(r.get(f"{other}_iata")) or _clean_text(r.get(f"{other}_icao"))
+            other_airport = (airport_by_code(r.get(f"{other}_icao"))
+                             or airport_by_code(r.get(f"{other}_iata")))
+            delay = _clean_number(r.get(f"{side}_delayed"))
+            rows.append({
+                "flight": _clean_text(r.get("flight_iata")) or _clean_text(r.get("flight_icao")),
+                "callsign": _clean_text(r.get("flight_icao")),
+                "other": other_code,
+                "otherCity": other_airport["city"] if other_airport else "",
+                "time": _hhmm(r.get(f"{side}_time")),
+                "estTime": _hhmm(r.get(f"{side}_actual") or r.get(f"{side}_estimated")),
+                "ts": scheduled,
+                "bestTs": best,
+                "status": _clean_text(r.get("status")),
+                "terminal": _clean_text(r.get(f"{side}_terminal")),
+                "gate": _clean_text(r.get(f"{side}_gate")),
+                "delay": delay if delay and delay > 0 else None,
+                "aircraft": _clean_text(r.get("aircraft_icao")),
+            })
+
+        rows.sort(key=lambda row: row["bestTs"])
+        text = json.dumps({"found": True, "rows": rows, "partial": partial,
+                           "fetchedAt": int(now * 1000)})
+        if len(_schedules) > 200:
+            _schedules.clear()
+        _schedules[cache_key] = (time.time(), text)
+        return text
 
 
 def get_best_route(callsign, hex_code, precise):
@@ -802,6 +917,21 @@ class Handler(SimpleHTTPRequestHandler):
                                             "retryAfter": error.retry_after})
             except Exception as error:  # noqa: BLE001
                 print(f"adsbdb route failed ({error})")
+                return self.send_json(502, {"error": str(error), "retryAfter": 0})
+
+        if url.path == "/api/schedule":
+            query = urllib.parse.parse_qs(url.query)
+            code = (query.get("airport") or [""])[0]
+            kind = (query.get("kind") or [""])[0]
+            if not re.fullmatch(r"[A-Za-z0-9]{3,4}", code) or kind not in ("arrivals", "departures"):
+                return self.send_json(400, {"error": "Bad parameters"})
+            try:
+                return self.send_json(200, get_airport_schedule(code, kind))
+            except AirLabsOff as error:
+                print(f"{error} - skipping AirLabs for an hour")
+                return self.send_json(200, {"found": False, "reason": "limit"})
+            except Exception as error:  # noqa: BLE001
+                print(f"AirLabs schedule failed ({error})")
                 return self.send_json(502, {"error": str(error), "retryAfter": 0})
 
         if url.path == "/api/track":

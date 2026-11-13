@@ -184,32 +184,21 @@
 
             <div class="panel-content">
 
-                <div class="data-label">LOCATION</div>
-
-                <input
+                <textarea
                     id="markerName"
-                    class="panel-input"
-                    placeholder="Location name"
-                    maxlength="80"
-                >
+                    class="location-title"
+                    placeholder="Unnamed location"
+                    title="Click to rename"
+                    maxlength="300"
+                    rows="1"
+                ></textarea>
+
+                <div class="flight-subtitle" id="inspectAddress"></div>
+
+                <div class="flight-subtitle" id="inspectCoords">--</div>
 
 
-                <div class="data-label">LATITUDE</div>
-
-                <div class="data-value" id="inspectLat">--</div>
-
-
-                <div class="data-label">LONGITUDE</div>
-
-                <div class="data-value" id="inspectLon">--</div>
-
-
-                <div class="data-label">COORDINATES</div>
-
-                <div class="data-value" id="inspectCoords">--</div>
-
-
-                <div class="data-label">DESCRIPTION</div>
+                <div class="data-label">NOTES</div>
 
                 <textarea
                     id="markerDescription"
@@ -396,6 +385,8 @@
 
                 <div class="flight-subtitle" id="airportSub"></div>
 
+                <div class="flight-subtitle airport-address" id="airportAddress"></div>
+
                 <div class="airport-tabs">
                     <button id="airportTabArrivals" class="airport-tab active">ARRIVALS</button>
                     <button id="airportTabDepartures" class="airport-tab">DEPARTURES</button>
@@ -406,10 +397,29 @@
                 <div class="airport-empty" id="airportEmpty"></div>
 
                 <div class="airport-note">
-                    Live aircraft near the airport, not a timetable. Flights
-                    marked EST. are guessed from altitude, climb and heading;
-                    the others use the callsign's known route. Click a row
-                    to follow the aircraft.
+                    Live aircraft near the airport. Flights marked EST. are
+                    guessed from altitude, climb and heading; the others use
+                    the callsign's known route. Click a row to follow the
+                    aircraft.
+                </div>
+
+                <div class="airport-section-title" id="airportScheduleTitle">SCHEDULED · NEXT HOUR</div>
+
+                <div class="airport-list" id="airportSchedule"></div>
+
+                <div class="airport-empty" id="airportScheduleEmpty"></div>
+
+                <div class="airport-section-title" id="airportEarlierTitle">EARLIER</div>
+
+                <div class="airport-list" id="airportEarlier"></div>
+
+                <div class="airport-empty" id="airportEarlierEmpty"></div>
+
+                <div class="airport-note">
+                    Timetable from AirLabs, in the airport's local time.
+                    Earlier flights go back as far as the free plan allows
+                    (usually 1-2 hours). Codeshares are hidden. Rows marked
+                    LIVE are on the map; click them to follow the aircraft.
                 </div>
 
             </div>
