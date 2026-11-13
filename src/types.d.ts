@@ -31,6 +31,29 @@ type FlightShape =
     | "narrow" | "wide" | "jumbo" | "regional" | "bizjet"
     | "turboprop" | "light" | "glider" | "fighter" | "heli";
 
+/**
+ * A wing or tailplane, drawn nose-up on the 48 x 48 icon grid. x values are
+ * distances out from the centre line; y runs from the nose (small) to the tail.
+ * [y of the front edge at the centre line, x of the tip,
+ *  y of the tip's front corner, y of the tip's back corner,
+ *  y of the back edge at the centre line]
+ */
+type FlightSurface = [
+    rootFront: number, tipX: number, tipFront: number, tipBack: number, rootBack: number
+];
+
+/** How one aircraft icon is built (see FLIGHT_SHAPES) */
+interface FlightShapeSpec {
+    width: number;          // fuselage half-width
+    nose: number;           // y of the nose tip
+    noseLength: number;     // length of the nose curve (longer = more pointed)
+    tail: number;           // y of the tail tip
+    wing: FlightSurface;
+    stabiliser: FlightSurface;
+    /** Engines: [x from centre line, y start, y end, width] */
+    pods: number[][];
+}
+
 type FlightColorKey = "normal" | "ground" | "military" | "emergency";
 
 /** One aircraft as the map uses it, whichever feed it came from */

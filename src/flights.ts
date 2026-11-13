@@ -534,152 +534,195 @@ function recordFlightHistory(records: Map<string, FlightRecord>): void {
 // F5. MAP ICONS AND LAYERS
 // ==============================================
 
-// Half-outlines of each aircraft, nose up, on a 48 x 48 canvas. Each point is
-// [distance from the centre line, y]; the left side is a mirror image.
-// "pods" are engines / nacelles: [distance from centre, y start, y end, width].
-const FLIGHT_SHAPES: Record<Exclude<FlightShape, "heli">, { body: number[][]; pods: number[][] }> = {
+// Each aircraft is drawn nose up on a 48 x 48 grid from soft, rounded parts:
+// a fuselage with a curved nose and tapered tail, swept wings and tailplane
+// with rounded tips, and capsule-shaped engines. See FlightShapeSpec for what
+// the numbers mean (x is measured out from the centre line, y runs down).
+const FLIGHT_SHAPES: Record<Exclude<FlightShape, "heli">, FlightShapeSpec> = {
     narrow: {
-        body: [[0, 3], [3, 14], [3, 20], [20, 30], [20, 34], [3, 29.5], [2.5, 38], [8, 42.5], [8, 45], [0, 43]],
-        pods: []
+        width: 3.1, nose: 3, noseLength: 9, tail: 45.5,
+        wing: [17.5, 20.5, 29.5, 33.5, 29.5],
+        stabiliser: [36.5, 8.5, 42, 44.8, 43],
+        pods: [[8.6, 20.5, 26.5, 3]]
     },
     wide: {
-        body: [[0, 2], [3.6, 12], [3.6, 19], [22, 31], [22, 35.5], [3.6, 31], [3, 39], [9.5, 43], [9.5, 46], [0, 44.5]],
-        pods: [[9.5, 19, 27, 2.6]]
+        width: 3.7, nose: 2, noseLength: 9, tail: 46.5,
+        wing: [16.5, 22.5, 30.5, 35, 31],
+        stabiliser: [37.5, 10, 42.5, 45.8, 44],
+        pods: [[9.8, 19.5, 26.5, 3.2]]
     },
     jumbo: {
-        body: [[0, 1.5], [4, 11], [4, 17], [23.5, 30], [23.5, 35], [4, 31], [3.4, 39], [10.5, 43], [10.5, 46.5], [0, 45]],
-        pods: [[9, 16.5, 24, 2.6], [16, 21.5, 29, 2.6]]
+        width: 4.1, nose: 1.5, noseLength: 8.5, tail: 47,
+        wing: [15, 23.5, 29.5, 34.5, 31],
+        stabiliser: [37.5, 11, 42.5, 46.2, 44.5],
+        pods: [[9, 17, 23.5, 3], [16, 21.5, 28, 3]]
     },
     regional: {
-        body: [[0, 5], [2.5, 14], [2.5, 22], [16, 29.5], [16, 32.5], [2.5, 30.5], [2.2, 38.5], [7.5, 41.5], [7.5, 43.5], [0, 42.5]],
-        pods: [[3.7, 33, 39, 2.4]]
+        width: 2.7, nose: 5, noseLength: 8.5, tail: 44.5,
+        wing: [20, 16.5, 29, 32.3, 30],
+        stabiliser: [37.5, 8, 41, 43.4, 42.3],
+        pods: [[4.6, 32, 38, 2.8]]
     },
     bizjet: {
-        body: [[0, 7], [2, 15], [2, 22], [14, 31], [14, 33.5], [2, 30.5], [1.8, 38], [6.5, 41], [6.5, 42.8], [0, 41.8]],
-        pods: [[3.1, 33, 38.5, 2.2]]
+        width: 2.3, nose: 7, noseLength: 9, tail: 43.5,
+        wing: [20, 14.5, 30.5, 33.2, 30],
+        stabiliser: [37, 7, 40.5, 42.6, 41.6],
+        pods: [[4, 32, 37.5, 2.6]]
     },
     turboprop: {
-        body: [[0, 5], [2.8, 12], [2.8, 21], [21, 22.5], [21, 26.5], [2.8, 27], [2.4, 37], [9, 39], [9, 42], [0, 41]],
-        pods: [[8.5, 17.5, 25, 2.6]]
+        width: 2.9, nose: 5, noseLength: 7, tail: 43,
+        wing: [20.5, 21.5, 22, 26.2, 27],
+        stabiliser: [36.5, 9.5, 38.5, 41.6, 41],
+        pods: [[8.6, 17, 25, 3]]
     },
     light: {
-        body: [[0, 8], [2, 13], [2, 21], [17, 21.5], [17, 25], [2, 25.5], [1.6, 36], [7, 37.5], [7, 40.5], [0, 39.5]],
+        width: 2.3, nose: 8, noseLength: 5, tail: 41.5,
+        wing: [20.5, 17.5, 21.2, 25, 25.5],
+        stabiliser: [35.5, 7.5, 37.2, 40.2, 39.6],
         pods: []
     },
     glider: {
-        body: [[0, 9], [1.4, 13], [1.4, 21], [23, 21.5], [23, 24.5], [1.4, 25], [1.2, 37], [6, 38], [6, 40], [0, 39.5]],
+        width: 1.7, nose: 9, noseLength: 5, tail: 41,
+        wing: [20.5, 23.2, 21.4, 24.4, 24.8],
+        stabiliser: [36.5, 6.5, 37.8, 40, 39.6],
         pods: []
     },
     fighter: {
-        body: [[0, 2], [2, 12], [2.3, 20], [17, 37], [17, 40], [3.2, 39], [2.3, 44], [5.5, 46.5], [0, 45.5]],
+        width: 2.5, nose: 2, noseLength: 13, tail: 46.5,
+        wing: [17, 17.5, 36.5, 40, 39.5],
+        stabiliser: [41, 7, 44.5, 46.6, 45.6],
         pods: []
     }
 };
 
-// Right side down, then the mirror image back up
-function flightShapePolygon(half: number[][]): number[][] {
+// Icons are drawn at 4x their on-screen size so they stay sharp when the
+// map enlarges them and on high-resolution screens.
+const FLIGHT_ICON_GRID = 48;       // the grid the shapes are designed on
+const FLIGHT_ICON_SCALE = 2;       // canvas pixels per grid unit
+const FLIGHT_ICON_PIXEL_RATIO = 2 * FLIGHT_ICON_SCALE;   // 48-unit grid shows as 24 px
+const FLIGHT_ICON_OUTLINE = "#0c1118";
 
-    const pts = half.map(p => [24 + p[0], p[1]]);
+// A closed shape through the points, with every corner rounded off. Each
+// corner uses the given radius, or less where the edges are too short for it.
+function traceRoundedPolygon(ctx: CanvasRenderingContext2D, pts: number[][], radius: number): void {
 
-    for (let i = half.length - 2; i >= 1; i--) {
-        pts.push([24 - half[i][0], half[i][1]]);
+    const n = pts.length;
+
+    ctx.beginPath();
+
+    for (let i = 0; i < n; i++) {
+
+        const prev = pts[(i + n - 1) % n];
+        const cur = pts[i];
+        const next = pts[(i + 1) % n];
+
+        const a = Math.hypot(cur[0] - prev[0], cur[1] - prev[1]);
+        const b = Math.hypot(next[0] - cur[0], next[1] - cur[1]);
+
+        const cos = ((prev[0] - cur[0]) * (next[0] - cur[0]) +
+                     (prev[1] - cur[1]) * (next[1] - cur[1])) / (a * b || 1);
+
+        const angle = Math.acos(clampNumber(cos, -1, 1));
+
+        // The curve may use up to half of each edge it touches
+        const r = Math.min(radius, Math.tan(angle / 2) * Math.min(a, b) / 2);
+
+        if (i === 0) ctx.moveTo((prev[0] + cur[0]) / 2, (prev[1] + cur[1]) / 2);
+
+        ctx.arcTo(cur[0], cur[1], next[0], next[1], Math.max(0, r));
     }
 
-    return pts;
+    ctx.closePath();
 }
 
-// Every polygon that makes up one aircraft (body + engines)
-function flightShapePolygons(shape: FlightShape): number[][][] {
+// Fuselage: curved nose, straight sides, then a taper to a rounded tail
+function traceFlightFuselage(ctx: CanvasRenderingContext2D, spec: FlightShapeSpec): void {
 
-    const spec = shape === "heli" ? FLIGHT_SHAPES.narrow : FLIGHT_SHAPES[shape];
+    const cx = FLIGHT_ICON_GRID / 2;
+    const w = spec.width;
 
-    const polygons = [flightShapePolygon(spec.body)];
+    const shoulder = spec.nose + spec.noseLength;     // where the nose curve ends
+    const taper = Math.min(spec.wing[4] + 1, spec.tail - 6);   // where the tail starts narrowing
 
+    ctx.beginPath();
+    ctx.moveTo(cx - w, shoulder);
+    ctx.bezierCurveTo(cx - w, spec.nose + spec.noseLength * 0.35, cx - w * 0.6, spec.nose, cx, spec.nose);
+    ctx.bezierCurveTo(cx + w * 0.6, spec.nose, cx + w, spec.nose + spec.noseLength * 0.35, cx + w, shoulder);
+    ctx.lineTo(cx + w, taper);
+    ctx.quadraticCurveTo(cx + w * 0.8, spec.tail, cx, spec.tail);
+    ctx.quadraticCurveTo(cx - w * 0.8, spec.tail, cx - w, taper);
+    ctx.closePath();
+}
+
+// Both wings (or both halves of the tailplane) as one shape across the body
+function flightSurfacePolygon(surface: FlightSurface): number[][] {
+
+    const cx = FLIGHT_ICON_GRID / 2;
+
+    const [rootFront, tipX, tipFront, tipBack, rootBack] = surface;
+
+    return [
+        [cx, rootFront],
+        [cx + tipX, tipFront], [cx + tipX, tipBack],
+        [cx, rootBack],
+        [cx - tipX, tipBack], [cx - tipX, tipFront]
+    ];
+}
+
+// Every part of one aircraft, as functions that trace its outline
+function flightShapeParts(ctx: CanvasRenderingContext2D, shape: Exclude<FlightShape, "heli">): (() => void)[] {
+
+    const spec = FLIGHT_SHAPES[shape];
+    const cx = FLIGHT_ICON_GRID / 2;
+
+    const parts: (() => void)[] = [
+        () => traceRoundedPolygon(ctx, flightSurfacePolygon(spec.wing), 2.2),
+        () => traceRoundedPolygon(ctx, flightSurfacePolygon(spec.stabiliser), 1.6)
+    ];
+
+    // Engines: capsules on both sides
     spec.pods.forEach(function(pod) {
 
         [-1, 1].forEach(function(side) {
 
-            const cx = 24 + side * pod[0];
-            const h = pod[3] / 2;
+            const width = pod[3];
 
-            polygons.push([
-                [cx - h, pod[1]], [cx + h, pod[1]],
-                [cx + h, pod[2]], [cx - h, pod[2]]
-            ]);
+            parts.push(function() {
+                ctx.beginPath();
+                ctx.roundRect(cx + side * pod[0] - width / 2, pod[1], width, pod[2] - pod[1], width / 2);
+            });
 
         });
 
     });
 
-    return polygons;
+    parts.push(() => traceFlightFuselage(ctx, spec));
+
+    return parts;
 }
 
-function traceFlightPolygon(ctx: CanvasRenderingContext2D, pts: number[][]): void {
+// Helicopter: round cabin, tail boom with a tail rotor, two crossing blades
+function flightHelicopterParts(ctx: CanvasRenderingContext2D): (() => void)[] {
 
-    ctx.beginPath();
-
-    pts.forEach(function(p, i) {
-        if (i === 0) ctx.moveTo(p[0], p[1]);
-        else ctx.lineTo(p[0], p[1]);
-    });
-
-    ctx.closePath();
-
-}
-
-function drawHelicopterIcon(ctx: CanvasRenderingContext2D, color: string): void {
-
-    const parts: number[][][] = [
-        [[22.8, 26], [25.2, 26], [25.2, 42], [22.8, 42]],     // tail boom
-        [[20, 40.8], [28, 40.8], [28, 43.6], [20, 43.6]]      // tail rotor
+    return [
+        function() {                                   // tail boom
+            ctx.beginPath();
+            ctx.roundRect(22.7, 25, 2.6, 17.5, 1.3);
+        },
+        function() {                                   // tail rotor
+            ctx.beginPath();
+            ctx.roundRect(19.5, 40.6, 9, 3, 1.5);
+        },
+        function() {                                   // cabin
+            ctx.beginPath();
+            ctx.ellipse(24, 21, 5.8, 9, 0, 0, Math.PI * 2);
+        }
     ];
-
-    ctx.lineJoin = "round";
-    ctx.lineCap = "round";
-    ctx.lineWidth = 2.5;
-    ctx.strokeStyle = "#0c1118";
-    ctx.fillStyle = color;
-
-    parts.forEach(function(pts) {
-        traceFlightPolygon(ctx, pts);
-        ctx.stroke();
-    });
-
-    ctx.beginPath();
-    ctx.ellipse(24, 21, 5.5, 9, 0, 0, Math.PI * 2);
-    ctx.stroke();
-
-    parts.forEach(function(pts) {
-        traceFlightPolygon(ctx, pts);
-        ctx.fill();
-    });
-
-    ctx.beginPath();
-    ctx.ellipse(24, 21, 5.5, 9, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Main rotor: two crossing blades
-    const blades: [stroke: string, width: number][] = [["#0c1118", 5], [color, 2.4]];
-
-    blades.forEach(function(style) {
-
-        ctx.strokeStyle = style[0];
-        ctx.lineWidth = style[1];
-
-        ctx.beginPath();
-        ctx.moveTo(8, 8);
-        ctx.lineTo(40, 34);
-        ctx.moveTo(8, 34);
-        ctx.lineTo(40, 8);
-        ctx.stroke();
-
-    });
-
 }
 
 function createPlaneIcon(shape: FlightShape, color: string): ImageData {
 
-    const size = 48;
+    const size = FLIGHT_ICON_GRID * FLIGHT_ICON_SCALE;
 
     const canvas = document.createElement("canvas");
     canvas.width = size;
@@ -687,30 +730,55 @@ function createPlaneIcon(shape: FlightShape, color: string): ImageData {
 
     const ctx = canvasContext(canvas);
 
+    ctx.scale(FLIGHT_ICON_SCALE, FLIGHT_ICON_SCALE);   // draw in grid units from here on
+
+    const parts = shape === "heli"
+        ? flightHelicopterParts(ctx)
+        : flightShapeParts(ctx, shape);
+
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+
+    // Outline every part first, then fill them all: the parts merge into
+    // one silhouette with a single dark edge around it
+    ctx.lineWidth = 2.4;
+    ctx.strokeStyle = FLIGHT_ICON_OUTLINE;
+
+    parts.forEach(function(trace) {
+        trace();
+        ctx.stroke();
+    });
+
+    ctx.fillStyle = color;
+
+    parts.forEach(function(trace) {
+        trace();
+        ctx.fill();
+    });
+
     if (shape === "heli") {
 
-        drawHelicopterIcon(ctx, color);
+        // Main rotor on top: two crossing blades with rounded ends, and a hub
+        const blades: [stroke: string, width: number][] = [[FLIGHT_ICON_OUTLINE, 4.8], [color, 2.4]];
 
-    } else {
+        blades.forEach(function(style) {
 
-        const polygons = flightShapePolygons(shape);
+            ctx.strokeStyle = style[0];
+            ctx.lineWidth = style[1];
 
-        ctx.lineJoin = "round";
-        ctx.lineWidth = 2.5;
-        ctx.strokeStyle = "#0c1118";
-
-        // Outline everything first, then fill: engines merge into the body
-        polygons.forEach(function(pts) {
-            traceFlightPolygon(ctx, pts);
+            ctx.beginPath();
+            ctx.moveTo(8, 8);
+            ctx.lineTo(40, 34);
+            ctx.moveTo(8, 34);
+            ctx.lineTo(40, 8);
             ctx.stroke();
+
         });
 
-        ctx.fillStyle = color;
-
-        polygons.forEach(function(pts) {
-            traceFlightPolygon(ctx, pts);
-            ctx.fill();
-        });
+        ctx.beginPath();
+        ctx.arc(24, 21, 1.6, 0, Math.PI * 2);
+        ctx.fillStyle = FLIGHT_ICON_OUTLINE;
+        ctx.fill();
 
     }
 
@@ -822,7 +890,7 @@ function setupFlightLayers(): void {
 
             if (!map.hasImage(id)) {
                 map.addImage(id, flightIconImage(shape, colorKey), {
-                    pixelRatio: 2
+                    pixelRatio: FLIGHT_ICON_PIXEL_RATIO
                 });
             }
 
@@ -991,9 +1059,11 @@ function setupFlightLayers(): void {
                 "icon-size": [
                     "interpolate", ["linear"], ["zoom"],
                     2, 1,
-                    6, 1,
-                    10, 1.5,
-                    14, 1.5
+                    4,1.25,
+                    6, 1.5,
+                    10, 2,
+                    14, 2.5,
+                    18,3
                 ],
                 "symbol-sort-key": ["get", "sort"]
             }
