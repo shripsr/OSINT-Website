@@ -18,7 +18,9 @@
 const FLIGHT_FEEDS: FlightFeed[] = [
     {
         name: "adsb.fi",
-        url: (p) => `https://opendata.adsb.fi/api/v2/lat/${p.lat}/lon/${p.lon}/dist/${p.radius}`
+        url: (p) => `https://opendata.adsb.fi/api/v2/lat/${p.lat}/lon/${p.lon}/dist/${p.radius}`,
+        find: (kind, value) =>
+            `https://opendata.adsb.fi/api/v2/${kind === "reg" ? "registration" : kind}/${encodeURIComponent(value)}`
     },
     {
         name: "airplanes.live",
@@ -26,9 +28,24 @@ const FLIGHT_FEEDS: FlightFeed[] = [
     },
     {
         name: "adsb.lol",
-        url: (p) => `https://api.adsb.lol/v2/point/${p.lat}/${p.lon}/${p.radius}`
+        url: (p) => `https://api.adsb.lol/v2/point/${p.lat}/${p.lon}/${p.radius}`,
+        find: (kind, value) => `https://api.adsb.lol/v2/${kind}/${encodeURIComponent(value)}`
     }
 ];
+
+// Search box and watchlist: find one aircraft anywhere in the world by
+// ICAO hex, callsign or registration (relay first, then the feeds above).
+const FLIGHT_LOCATE_PATH = "/api/locate";
+const FLIGHT_LOCATE_MAX_AGE_MS = 300000;    // ignore positions older than this
+const FLIGHT_LOCATE_KEEP_MS = 45000;        // keep a located aircraft until its area loads
+
+// Watchlist (saved in this browser)
+const FLIGHT_WATCH_KEY = "osint_map_flight_watchlist";
+const FLIGHT_WATCH_MAX = 25;
+const FLIGHT_WATCH_CHECK_MS = 10000;        // at most one worldwide check per this
+const FLIGHT_WATCH_STALE_MS = 180000;       // re-check an off-map entry after this
+const FLIGHT_WATCH_ALERT_GAP_MS = 600000;   // don't announce the same entry more often
+const FLIGHT_WATCH_COLOR = "#00d68f";
 
 // Optional: if you run server.js, requests go through it first.
 const FLIGHT_PROXY_PATH = "/api/flights";
@@ -72,6 +89,7 @@ const FLIGHT_SOURCE = "flights-source";
 const FLIGHT_TRAIL_SOURCE = "flights-trail-source";
 const FLIGHT_LAYER = "flights-layer";
 const FLIGHT_SELECTED_LAYER = "flights-selected-layer";
+const FLIGHT_WATCH_LAYER = "flights-watch-layer";
 const FLIGHT_TRAIL_LAYER = "flights-trail-layer";
 const FLIGHT_TRAIL_CASING_LAYER = "flights-trail-casing-layer";
 const FLIGHT_ROUTE_SOURCE = "flights-route-source";
@@ -163,6 +181,16 @@ let lastAirportGeoJSON: GeoFeatureCollection = { type: "FeatureCollection", feat
 let selectedAirport: Airport | null = null;
 let airportTab: ScheduleKind = "arrivals";
 let airportTick = 0;
+
+let flightLocated: { rec: FlightRecord; at: number } | null = null;   // found by a worldwide lookup
+
+let watchlist: WatchlistEntry[] = [];
+const watchlistStatus = new Map<string, WatchlistStatus>();   // entry key -> last worldwide check
+let watchlistLive = new Map<string, FlightRecord>();          // entry key -> aircraft on the map now
+let watchlistHexes = new Set<string>();                       // hex of every watched aircraft on the map
+let watchlistScannedStore: Map<string, FlightRecord> | null = null;
+let watchlistDirty = true;
+let watchlistCheckBusy = false;
 
 let selectedFlightHex: string | null = null;
 let followFlight = false;
@@ -485,6 +513,7 @@ function buildFlightFeature(rec: FlightRecord, now: number): GeoFeature {
             callsign: rec.callsign,
             icon: shape + "-" + flightColorKey(rec),
             track: rec.track == null ? 0 : rec.track,
+            watched: watchlistHexes.has(rec.hex),
             sort: rec.emergency ? 1000000 : (rec.alt || 0)
         }
     };
@@ -1045,6 +1074,24 @@ function setupFlightLayers(): void {
         });
     }
 
+    // Ring around every watchlist aircraft
+    if (!map.getLayer(FLIGHT_WATCH_LAYER)) {
+        map.addLayer({
+            id: FLIGHT_WATCH_LAYER,
+            type: "circle",
+            source: FLIGHT_SOURCE,
+            filter: ["==", ["get", "watched"], true],
+            paint: {
+                "circle-radius": 14,
+                "circle-color": FLIGHT_WATCH_COLOR,
+                "circle-opacity": 0.12,
+                "circle-stroke-color": FLIGHT_WATCH_COLOR,
+                "circle-stroke-width": 2,
+                "circle-pitch-alignment": "viewport"
+            }
+        });
+    }
+
     if (!map.getLayer(FLIGHT_LAYER)) {
         map.addLayer({
             id: FLIGHT_LAYER,
@@ -1092,6 +1139,7 @@ function ensureFlightLayers(): void {
         map.getLayer(FLIGHT_TRAIL_CASING_LAYER) &&
         map.getLayer(FLIGHT_TRAIL_LAYER) &&
         map.getLayer(FLIGHT_SELECTED_LAYER) &&
+        map.getLayer(FLIGHT_WATCH_LAYER) &&
         map.getLayer(FLIGHT_LAYER)
     ) return;
 
@@ -1441,6 +1489,8 @@ async function refreshFlights(): Promise<void> {
         }
 
 
+        keepLocatedFlight(next);
+
         flightStore = next;
 
         recordFlightHistory(next);
@@ -1739,6 +1789,8 @@ async function refreshWorldFlights(): Promise<void> {
 
     flightFailures = 0;
 
+    keepLocatedFlight(next);
+
     flightStore = next;
 
     flightWorldFetchedAt = Date.now();
@@ -1787,6 +1839,9 @@ function tickFlights(force?: boolean): void {
     // The world snapshot holds thousands of aircraft that barely move on
     // screen, so redraw those every 5th tick instead of every tick.
     const redraw = force === true || !flightWorldMode || ++flightWorldTick % 5 === 0;
+
+    // New feed data (or a changed watchlist): work out which watched aircraft are here
+    if (watchlistDirty || flightStore !== watchlistScannedStore) scanWatchlist(now);
 
     if (redraw) {
 
@@ -2726,6 +2781,15 @@ function updateFlightPanel(now: number): void {
 
     renderFlightRoute(rec, pos);
 
+    const watchButton = flightEl("watchFlight");
+
+    if (watchButton) {
+        const watched = Boolean(watchlistEntryFor(rec));
+        watchButton.textContent = watched ? "REMOVE FROM WATCHLIST" : "ADD TO WATCHLIST";
+        watchButton.classList.toggle("watched", watched);
+    }
+
+    if (watchlistEntryFor(rec)) addFlightBadge(badges, "WATCHED", "watched");
     if (rec.emergency) addFlightBadge(badges, "EMERGENCY", "emergency");
     if (rec.military) addFlightBadge(badges, "MILITARY", "military");
     if (rec.onGround) addFlightBadge(badges, "ON GROUND", "ground");
@@ -3023,6 +3087,8 @@ async function loadFlightPhoto(rec: FlightRecord): Promise<void> {
 function selectFlight(hex: string): void {
 
     closeAirportPanel();
+
+    closeWatchlistPanel();
 
     selectedFlightHex = hex;
 
@@ -3458,8 +3524,752 @@ async function loadAirportAddress(airport: Airport): Promise<void> {
     }
 }
 
-// Search box: jump to a tracked aircraft by callsign, registration or ICAO hex,
-// or open an airport. Resolves to true if it handled the search.
+// ==============================================
+// F10b. LOCATE ONE AIRCRAFT ANYWHERE
+//
+// The regional feed only covers what is on screen. To find a specific
+// flight, the feeds are asked for it directly by hex, callsign or
+// registration, and the map then flies to wherever it is.
+// ==============================================
+
+// Shows a message at the bottom of the map, then clears it again
+function flashFlightNotice(message: string, ms = 6000): void {
+
+    showFlightNotice(message);
+
+    setTimeout(function() {
+
+        const notice = flightEl("flightNotice");
+
+        if (notice && notice.textContent === message) showFlightNotice("");
+
+    }, ms);
+}
+
+// Which lookups are worth trying for what the user typed, in order.
+// Empty when the text doesn't look like an aircraft at all (a place name).
+function flightLookupPlan(query: string): [kind: FlightLookupKind, value: string][] {
+
+    const q = String(query).trim().toUpperCase();
+
+    const plan: [FlightLookupKind, string][] = [];
+
+    // Callsigns: ACA123, BAW12AB, N123AB (letters and digits, no spaces)
+    if (/^[A-Z0-9]{3,8}$/.test(q) && /[A-Z]/.test(q) && /\d/.test(q)) plan.push(["callsign", q]);
+
+    if (looksLikeRegistration(q)) plan.push(["reg", q]);
+
+    // ACA123 is also a valid hex code, but it is far more likely the airline
+    // callsign: an airline-style text tries hex last, anything else first.
+    if (/^[0-9A-F]{6}$/.test(q)) {
+        if (/^[A-Z]{3}\d/.test(q)) plan.push(["hex", q.toLowerCase()]);
+        else plan.unshift(["hex", q.toLowerCase()]);
+    }
+
+    return plan;
+}
+
+// Newest usable position in a feed's answer, as one of our records
+function pickLookupRecord(list: AdsbAircraft[], receivedAt: number): FlightRecord | null {
+
+    let best: FlightRecord | null = null;
+
+    for (const raw of list) {
+
+        const rec = parseAircraft(raw, receivedAt);
+
+        if (!rec || receivedAt - rec.t0 > FLIGHT_LOCATE_MAX_AGE_MS) continue;
+
+        if (!best || rec.t0 > best.t0) best = rec;
+
+    }
+
+    return best;
+}
+
+// Returns the aircraft, null (no feed is receiving it right now)
+// or undefined (the lookup itself failed).
+async function fetchFlightLookup(kind: FlightLookupKind, value: string): Promise<FlightRecord | null | undefined> {
+
+    const attempts: { name: string; url: string; proxy?: boolean }[] = [];
+
+    if (flightProxyOk !== false && /^https?:$/.test(location.protocol)) {
+        attempts.push({
+            name: "local proxy",
+            url: `${FLIGHT_LOCATE_PATH}?kind=${kind}&value=${encodeURIComponent(value)}`,
+            proxy: true
+        });
+    }
+
+    const now = Date.now();
+
+    const finders = FLIGHT_FEEDS.filter(f => f.find);
+
+    let feeds = finders.filter(f => (flightFeedCooldown.get(f.name) || 0) <= now);
+
+    if (!feeds.length) feeds = finders;
+
+    feeds.forEach(function(f) {
+        if (f.find) attempts.push({ name: f.name, url: f.find(kind, value) });
+    });
+
+    let answered = false;
+
+    for (const attempt of attempts) {
+
+        if (!attempt.proxy) await waitForFlightSlot();
+
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 15000);
+
+        try {
+
+            const response = await fetch(attempt.url, { signal: controller.signal });
+
+            if (!response.ok) {
+                const error: FlightFetchError = new Error(`${attempt.name}: HTTP ${response.status}`);
+                error.status = response.status;
+                throw error;
+            }
+
+            const json = await response.json();
+
+            const list: AdsbAircraft[] = Array.isArray(json.ac) ? json.ac : [];
+
+            answered = true;
+
+            const rec = pickLookupRecord(list, Date.now());
+
+            if (rec) {
+                rememberFlightDetails(rec);
+                return applyKnownDetails(rec);
+            }
+
+            // The relay has already asked every feed
+            if (attempt.proxy) return null;
+
+        }
+
+        catch (caught) {
+
+            const error = asFetchError(caught);
+
+            console.warn("Flight lookup failed:", attempt.name, error.message);
+
+            // (A relay without /api/locate just falls through to the feeds;
+            // it keeps working for everything else.)
+            if (!attempt.proxy && error.status === 429) {
+                flightFeedCooldown.set(attempt.name, Date.now() + 60000);
+            }
+
+        }
+
+        finally {
+
+            clearTimeout(timer);
+
+        }
+
+    }
+
+    return answered ? null : undefined;
+}
+
+// Same three answers as fetchFlightLookup, trying each way of reading the text
+async function locateFlightAnywhere(query: string): Promise<FlightRecord | null | undefined> {
+
+    const plan = flightLookupPlan(query);
+
+    let failed = !plan.length;
+
+    for (const step of plan) {
+
+        const rec = await fetchFlightLookup(step[0], step[1]);
+
+        if (rec) return rec;
+
+        if (rec === undefined) failed = true;
+
+    }
+
+    return failed ? undefined : null;
+}
+
+// A located aircraft is usually outside the area the feed last covered.
+// Keep it in the data until the map has moved there and loaded that area.
+function keepLocatedFlight(next: Map<string, FlightRecord>): void {
+
+    if (!flightLocated) return;
+
+    if (Date.now() - flightLocated.at > FLIGHT_LOCATE_KEEP_MS) {
+        flightLocated = null;
+        return;
+    }
+
+    if (!next.has(flightLocated.rec.hex)) {
+        next.set(flightLocated.rec.hex, flightLocated.rec);
+    }
+}
+
+// Put an aircraft found by a worldwide lookup on the map and fly to it
+function showLocatedFlight(rec: FlightRecord): void {
+
+    flightLocated = { rec: rec, at: Date.now() };
+
+    const current = flightStore.get(rec.hex);
+
+    if (!current || current.t0 < rec.t0) flightStore.set(rec.hex, rec);
+
+    watchlistDirty = true;
+
+    tickFlights(true);
+
+    showFlightFound(flightStore.get(rec.hex) || rec);
+}
+
+
+// ==============================================
+// F10c. WATCHLIST
+//
+// Aircraft (by hex) or flights (by callsign / registration) the user wants
+// to keep an eye on. Saved in the browser. Watched aircraft get a green
+// ring on the map; the ones that are not on screen are looked up worldwide
+// one at a time, so the list can say whether each one is flying.
+// ==============================================
+
+// Hex, callsign and registration all compared as A-Z 0-9 (C-FABC = CFABC)
+function watchKey(text: unknown): string {
+    return String(text || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function watchlistEntryFor(rec: FlightRecord): WatchlistEntry | undefined {
+
+    if (!watchlist.length) return undefined;
+
+    const hex = rec.hex.toUpperCase();
+    const callsign = watchKey(rec.callsign);
+    const reg = watchKey(rec.reg);
+
+    return watchlist.find(
+        e => e.key === hex || (callsign !== "" && e.key === callsign) || (reg !== "" && e.key === reg)
+    );
+}
+
+function watchStatusFor(key: string): WatchlistStatus {
+
+    let status = watchlistStatus.get(key);
+
+    if (!status) {
+        status = { known: false, rec: null, checkedAt: 0, alertedAt: 0 };
+        watchlistStatus.set(key, status);
+    }
+
+    return status;
+}
+
+function loadWatchlist(): void {
+
+    try {
+
+        const saved: unknown = JSON.parse(localStorage.getItem(FLIGHT_WATCH_KEY) || "[]");
+
+        if (!Array.isArray(saved)) return;
+
+        const seen = new Set<string>();
+
+        watchlist = [];
+
+        saved.forEach(function(item: Partial<WatchlistEntry> | null) {
+
+            if (!item || typeof item.key !== "string" || typeof item.query !== "string") return;
+
+            const key = watchKey(item.key);
+
+            if (key.length < 3 || seen.has(key) || watchlist.length >= FLIGHT_WATCH_MAX) return;
+
+            seen.add(key);
+
+            watchlist.push({
+                key: key,
+                query: item.query.slice(0, 12),
+                label: (typeof item.label === "string" && item.label ? item.label : key).slice(0, 16),
+                addedAt: Number(item.addedAt) || Date.now()
+            });
+
+        });
+
+    } catch (error) {
+        watchlist = [];     // storage unavailable or damaged: start empty
+    }
+}
+
+function saveWatchlist(): void {
+
+    try {
+        localStorage.setItem(FLIGHT_WATCH_KEY, JSON.stringify(watchlist));
+    } catch (error) {
+        // Storage unavailable: the list just won't persist
+    }
+}
+
+// quiet = don't announce it if it is already on the map (the user can see it)
+function addWatch(key: string, query: string, label: string, quiet: boolean): boolean {
+
+    if (watchlist.some(e => e.key === key)) return false;
+
+    if (watchlist.length >= FLIGHT_WATCH_MAX) {
+        flashFlightNotice(`WATCHLIST IS FULL (${FLIGHT_WATCH_MAX}) - REMOVE ONE FIRST`);
+        return false;
+    }
+
+    watchlist.push({ key: key, query: query, label: label, addedAt: Date.now() });
+
+    watchStatusFor(key).alertedAt = quiet ? Date.now() : 0;
+
+    saveWatchlist();
+
+    watchlistDirty = true;
+
+    tickFlights(true);
+
+    return true;
+}
+
+function removeWatch(key: string): void {
+
+    watchlist = watchlist.filter(e => e.key !== key);
+
+    watchlistStatus.delete(key);
+
+    saveWatchlist();
+
+    watchlistDirty = true;
+
+    tickFlights(true);
+}
+
+// Which watched aircraft are in the feed data right now
+function scanWatchlist(now: number): void {
+
+    watchlistDirty = false;
+    watchlistScannedStore = flightStore;
+
+    const live = new Map<string, FlightRecord>();
+    const hexes = new Set<string>();
+
+    if (watchlist.length) {
+
+        const byKey = new Map<string, WatchlistEntry>();
+
+        watchlist.forEach(e => byKey.set(e.key, e));
+
+        flightStore.forEach(function(rec) {
+
+            const entry =
+                byKey.get(rec.hex.toUpperCase()) ||
+                (rec.callsign ? byKey.get(watchKey(rec.callsign)) : undefined) ||
+                (rec.reg ? byKey.get(watchKey(rec.reg)) : undefined);
+
+            if (!entry) return;
+
+            hexes.add(rec.hex);
+
+            if (!live.has(entry.key)) live.set(entry.key, rec);
+
+        });
+
+    }
+
+    const arrived: string[] = [];
+
+    live.forEach(function(rec, key) {
+
+        const status = watchStatusFor(key);
+
+        status.known = true;
+        status.rec = rec;
+        status.checkedAt = now;
+
+        if (!watchlistLive.has(key) && now - status.alertedAt > FLIGHT_WATCH_ALERT_GAP_MS) {
+
+            status.alertedAt = now;
+
+            const entry = watchlist.find(e => e.key === key);
+
+            if (entry) arrived.push(entry.label);
+
+        }
+
+    });
+
+    watchlistLive = live;
+    watchlistHexes = hexes;
+
+    if (arrived.length) {
+        flashFlightNotice(`WATCHLIST: ${arrived.join(", ")} ON THE MAP`);
+    }
+
+    renderWatchlist(now);
+}
+
+function watchAltitudeText(rec: FlightRecord): string {
+    if (rec.onGround) return "ON GROUND";
+    if (rec.alt == null) return "";
+    return `${Math.round(rec.alt).toLocaleString("en-US")} FT`;
+}
+
+function watchlistRowState(entry: WatchlistEntry, now: number): { state: string; detail: string } {
+
+    const live = watchlistLive.get(entry.key);
+
+    if (live) {
+
+        const callsign = live.callsign && watchKey(live.callsign) !== watchKey(entry.label)
+            ? live.callsign : "";
+
+        return {
+            state: "live",
+            detail: ["ON THE MAP", callsign, watchAltitudeText(live)].filter(Boolean).join(" · ")
+        };
+    }
+
+    const status = watchlistStatus.get(entry.key);
+
+    if (!status || !status.known) {
+        return {
+            state: "unknown",
+            detail: flightsEnabled ? "CHECKING..." : "TURN ON FLIGHT TRACKING TO CHECK"
+        };
+    }
+
+    if (status.rec && now - status.checkedAt < FLIGHT_WATCH_STALE_MS * 2) {
+        return {
+            state: "away",
+            detail: [
+                status.rec.onGround ? "TRANSMITTING" : "FLYING",
+                status.rec.callsign && watchKey(status.rec.callsign) !== watchKey(entry.label)
+                    ? status.rec.callsign : "",
+                watchAltitudeText(status.rec),
+                "CLICK TO LOCATE"
+            ].filter(Boolean).join(" · ")
+        };
+    }
+
+    return {
+        state: "off",
+        detail: `NOT BROADCASTING · CHECKED ${formatFlightTime(new Date(status.checkedAt)).slice(0, 5)}Z`
+    };
+}
+
+function renderWatchlist(now: number): void {
+
+    setFlightText("watchlistCount", String(watchlist.length));
+
+    const toggle = flightEl("watchlistToggle");
+
+    // Green in the sidebar while at least one watched aircraft is on the map
+    if (toggle) toggle.classList.toggle("layer-on", watchlistLive.size > 0);
+
+    const list = flightEl("watchlistList");
+
+    if (!list) return;
+
+    list.textContent = "";
+
+    setFlightText(
+        "watchlistEmpty",
+        watchlist.length
+            ? ""
+            : "Nothing watched yet. Add a callsign, registration or ICAO hex above, " +
+              "or click an aircraft and press ADD TO WATCHLIST."
+    );
+
+    watchlist.forEach(function(entry) {
+
+        const info = watchlistRowState(entry, now);
+
+        const row = document.createElement("div");
+        row.className = "watch-row " + info.state;
+        row.dataset.key = entry.key;
+
+        const main = document.createElement("button");
+        main.type = "button";
+        main.className = "watch-row-main";
+        main.title = "Find this aircraft and fly to it";
+
+        const title = document.createElement("div");
+        title.className = "airport-row-main";
+        title.textContent = entry.label;
+
+        const detail = document.createElement("div");
+        detail.className = "airport-row-detail";
+        detail.textContent = info.detail;
+
+        main.appendChild(title);
+        main.appendChild(detail);
+
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "watch-row-remove";
+        remove.title = "Remove from watchlist";
+        remove.textContent = "×";
+
+        row.appendChild(main);
+        row.appendChild(remove);
+
+        list.appendChild(row);
+
+    });
+}
+
+// Watchlist row click: go to a watched aircraft, wherever it is
+async function locateWatched(key: string): Promise<void> {
+
+    const entry = watchlist.find(e => e.key === key);
+
+    if (!entry) return;
+
+    if (!flightsEnabled) setFlightsEnabled(true);
+
+    const status = watchStatusFor(key);
+
+    status.alertedAt = Date.now();      // the user is looking at it: no need to announce
+
+    const live = watchlistLive.get(key);
+
+    if (live && flightStore.has(live.hex)) {
+        showFlightFound(live);
+        return;
+    }
+
+    showFlightNotice(`LOCATING ${entry.label}...`);
+
+    const rec = await locateFlightAnywhere(entry.query);
+
+    if (rec !== undefined) {
+        status.known = true;
+        status.rec = rec;
+        status.checkedAt = Date.now();
+    }
+
+    if (rec && flightsEnabled) {
+        showFlightNotice("");
+        showLocatedFlight(rec);
+        return;
+    }
+
+    flashFlightNotice(
+        rec === null
+            ? `${entry.label} IS NOT BROADCASTING RIGHT NOW`
+            : "COULD NOT REACH THE FLIGHT FEEDS - TRY AGAIN"
+    );
+
+    renderWatchlist(Date.now());
+}
+
+// Background: look up the watched entry that has gone longest without a
+// check (and isn't on the map). One lookup at a time, to stay polite.
+async function checkNextWatched(): Promise<void> {
+
+    if (!flightsEnabled || document.hidden || watchlistCheckBusy || !watchlist.length) return;
+
+    const now = Date.now();
+
+    let entry: WatchlistEntry | undefined;
+    let oldest = Infinity;
+
+    for (const candidate of watchlist) {
+
+        if (watchlistLive.has(candidate.key)) continue;
+
+        const known = watchlistStatus.get(candidate.key);
+
+        const at = known ? known.checkedAt : 0;
+
+        if (now - at < FLIGHT_WATCH_STALE_MS || at >= oldest) continue;
+
+        oldest = at;
+        entry = candidate;
+
+    }
+
+    if (!entry) return;
+
+    watchlistCheckBusy = true;
+
+    let rec: FlightRecord | null | undefined;
+
+    try {
+        rec = await locateFlightAnywhere(entry.query);
+    } finally {
+        watchlistCheckBusy = false;
+    }
+
+    if (!watchlist.includes(entry)) return;     // removed while we waited
+
+    const status = watchStatusFor(entry.key);
+
+    const wasTransmitting = status.known && Boolean(status.rec);
+
+    status.checkedAt = Date.now();
+
+    if (rec !== undefined) {
+
+        status.known = true;
+        status.rec = rec;
+
+        if (rec && !wasTransmitting &&
+            status.checkedAt - status.alertedAt > FLIGHT_WATCH_ALERT_GAP_MS) {
+
+            status.alertedAt = status.checkedAt;
+
+            flashFlightNotice(
+                `WATCHLIST: ${entry.label} IS ${rec.onGround ? "TRANSMITTING ON THE GROUND" : "FLYING"}` +
+                " - OPEN THE WATCHLIST TO LOCATE IT",
+                9000
+            );
+
+        }
+
+    }
+
+    renderWatchlist(Date.now());
+}
+
+// "ADD TO WATCHLIST" in the flight panel: watches that airframe (by hex)
+function toggleWatchSelected(): void {
+
+    const stored = selectedFlightHex ? flightStore.get(selectedFlightHex) : undefined;
+
+    if (!stored) return;
+
+    const rec = displayRecord(stored);
+
+    const existing = watchlistEntryFor(rec);
+
+    if (existing) {
+        removeWatch(existing.key);
+    } else {
+        const hex = rec.hex.toUpperCase();
+        addWatch(watchKey(hex), rec.hex, rec.reg || rec.callsign || hex, true);
+    }
+
+    updateFlightPanel(Date.now());
+}
+
+function addWatchFromInput(): void {
+
+    const input = flightEl("watchlistInput") as HTMLInputElement | null;
+
+    if (!input) return;
+
+    const text = input.value.trim().toUpperCase();
+
+    if (!text) return;
+
+    if (!flightLookupPlan(text).length) {
+        setFlightText(
+            "watchlistHint",
+            "ENTER A CALLSIGN (ACA123), REGISTRATION (C-FABC) OR ICAO HEX (C01234)"
+        );
+        return;
+    }
+
+    const key = watchKey(text);
+
+    if (watchlist.some(e => e.key === key)) {
+        setFlightText("watchlistHint", `${text} IS ALREADY WATCHED`);
+        return;
+    }
+
+    if (addWatch(key, text, text, false)) {
+        input.value = "";
+        setFlightText("watchlistHint", "");
+    }
+}
+
+function closeWatchlistPanel(): void {
+
+    const panel = flightEl("watchlistPanel");
+
+    if (panel) panel.classList.remove("visible");
+}
+
+function toggleWatchlistPanel(): void {
+
+    const panel = flightEl("watchlistPanel");
+
+    if (!panel) return;
+
+    if (panel.classList.contains("visible")) {
+        closeWatchlistPanel();
+        return;
+    }
+
+    // The panels share the left side of the map
+    deselectFlight();
+
+    closeAirportPanel();
+
+    if (typeof clearSelection === "function") clearSelection();
+
+    panel.classList.add("visible");
+
+    renderWatchlist(Date.now());
+}
+
+function initializeWatchlist(): void {
+
+    loadWatchlist();
+
+    const toggle = flightEl("watchlistToggle");
+
+    if (toggle) toggle.addEventListener("click", toggleWatchlistPanel);
+
+    const close = flightEl("closeWatchlistPanel");
+
+    if (close) close.addEventListener("click", closeWatchlistPanel);
+
+    const watchButton = flightEl("watchFlight");
+
+    if (watchButton) watchButton.addEventListener("click", toggleWatchSelected);
+
+    const add = flightEl("watchlistAdd");
+
+    if (add) add.addEventListener("click", addWatchFromInput);
+
+    const input = flightEl("watchlistInput");
+
+    if (input) input.addEventListener("keydown", function(event) {
+        if (event.key === "Enter") addWatchFromInput();
+    });
+
+    const list = flightEl("watchlistList");
+
+    if (list) list.addEventListener("click", function(event) {
+
+        const target = event.target as Element | null;
+
+        if (!target || typeof target.closest !== "function") return;
+
+        const row = target.closest<HTMLElement>(".watch-row");
+
+        if (!row || !row.dataset.key) return;
+
+        if (target.closest(".watch-row-remove")) removeWatch(row.dataset.key);
+        else locateWatched(row.dataset.key);
+
+    });
+
+    setInterval(checkNextWatched, FLIGHT_WATCH_CHECK_MS);
+
+    renderWatchlist(Date.now());
+}
+
+
+// Search box: jump to an aircraft by callsign, registration or ICAO hex
+// (on the map already, or anywhere the feeds can see it), or open an
+// airport. Resolves to true if it handled the search.
 async function searchFlights(query: string): Promise<boolean> {
 
     if (!flightsEnabled) return false;
@@ -3468,17 +4278,20 @@ async function searchFlights(query: string): Promise<boolean> {
 
     if (q.length < 3) return false;
 
+    const shown = q.toUpperCase();
+
 
     // 1. Aircraft already on the map
+
+    const wanted = watchKey(q);
 
     for (const stored of flightStore.values()) {
 
         const rec = displayRecord(stored);
 
         if (
-            rec.callsign.toLowerCase() === q ||
-            rec.reg.toLowerCase() === q ||
-            rec.hex === q
+            rec.hex === q ||
+            (wanted !== "" && (watchKey(rec.callsign) === wanted || watchKey(rec.reg) === wanted))
         ) {
 
             showFlightFound(stored);
@@ -3495,38 +4308,71 @@ async function searchFlights(query: string): Promise<boolean> {
     if (openAirportFromSearch(findAirportByQuery(q))) return true;
 
 
-    // 3. A registration: ask adsbdb which aircraft it belongs to
+    // 3. Anywhere else in the world: ask the feeds for it directly
 
-    if (!looksLikeRegistration(q)) return false;
+    let located: FlightRecord | null | undefined;
 
-    const info = await fetchAircraftInfo(q.toUpperCase());
+    if (flightLookupPlan(q).length) {
 
-    if (!info || !info.hex) return false;
+        const searching = `LOCATING ${shown}...`;
 
-    flightInfoCache.set(info.hex, info);
+        showFlightNotice(searching);
 
-    const found = flightStore.get(info.hex);
-
-    if (found) {
-        showFlightFound(found);
-        return true;
-    }
-
-    // Real aircraft, but nothing from it in the current feed
-    const message =
-        `${info.registration || q.toUpperCase()} IS NOT ON THE MAP RIGHT NOW`;
-
-    showFlightNotice(message);
-
-    setTimeout(function() {
+        located = await locateFlightAnywhere(q);
 
         const notice = flightEl("flightNotice");
 
-        if (notice && notice.textContent === message) showFlightNotice("");
+        if (notice && notice.textContent === searching) showFlightNotice("");
 
-    }, 6000);
+        if (located && flightsEnabled) {
+            showLocatedFlight(located);
+            return true;
+        }
 
-    return true;
+    }
+
+
+    // 4. Not transmitting. If it is a real registration, say so by name
+
+    if (looksLikeRegistration(q)) {
+
+        const info = await fetchAircraftInfo(shown);
+
+        if (info && info.hex) {
+
+            flightInfoCache.set(info.hex, info);
+
+            const found = flightStore.get(info.hex);
+
+            if (found) {
+                showFlightFound(found);
+                return true;
+            }
+
+            flashFlightNotice(`${info.registration || shown} IS NOT ON THE MAP RIGHT NOW`);
+
+            return true;
+
+        }
+
+    }
+
+
+    // 5. Clearly a flight (airline callsign or hex code) rather than a place
+
+    const clearlyFlight =
+        /^[a-z]{3}\d{1,4}[a-z]{0,2}$/.test(q) ||
+        (/^[0-9a-f]{6}$/.test(q) && /[a-f]/.test(q) && /\d/.test(q));
+
+    if (clearlyFlight && located !== undefined) {
+
+        flashFlightNotice(`${shown} IS NOT BROADCASTING RIGHT NOW`);
+
+        return true;
+
+    }
+
+    return false;
 
 }
 
@@ -3767,6 +4613,8 @@ function selectAirport(icao: string): void {
     if (!airport) return;
 
     deselectFlight();
+
+    closeWatchlistPanel();
 
     // The airport panel and the location panel share the left side:
     // opening an airport closes the location (and removes its unsaved marker)
@@ -4429,6 +5277,8 @@ function initializeFlights(): void {
     flightRequiredEl("closeFlightPanel").addEventListener("click", deselectFlight);
 
     initializeAirportPanel();
+
+    initializeWatchlist();
 
     flightRequiredEl("followFlight").addEventListener("click", function() {
 

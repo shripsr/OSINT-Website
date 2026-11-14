@@ -159,6 +159,8 @@ interface FlightPlanTile {
 interface FlightFeed {
     name: string;
     url: (p: { lat: string; lon: string; radius: number }) => string;
+    /** Worldwide lookup of one aircraft (feeds without it are skipped) */
+    find?: (kind: FlightLookupKind, value: string) => string;
 }
 
 /** An Error carrying extra details from a failed feed / relay request */
@@ -307,4 +309,25 @@ interface NominatimPlace {
     category?: string;
     class?: string;
     type?: string;
+}
+
+// ---------- locate + watchlist ----------
+
+/** How the feeds can be asked for one aircraft, wherever it is */
+type FlightLookupKind = "hex" | "callsign" | "reg";
+
+/** One watched aircraft or flight (saved in the browser) */
+interface WatchlistEntry {
+    key: string;        // what is matched: hex, callsign or registration, A-Z 0-9 only
+    query: string;      // what the feeds are asked for (keeps the hyphen of C-FABC)
+    label: string;      // shown in the list
+    addedAt: number;
+}
+
+/** What the last worldwide check said about a watched entry */
+interface WatchlistStatus {
+    known: boolean;             // false until a check has actually answered
+    rec: FlightRecord | null;   // null (once known) = no feed is receiving it
+    checkedAt: number;
+    alertedAt: number;          // when we last announced it (0 = never)
 }

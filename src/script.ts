@@ -414,6 +414,7 @@ function inspectLocation(
     // The location panel and the airport panel share the left side:
     // opening a location closes the airport
     if (typeof closeAirportPanel === "function") closeAirportPanel();
+    if (typeof closeWatchlistPanel === "function") closeWatchlistPanel();
 
     // Remove only the previous temporary marker.
     // Never remove a permanently saved marker.

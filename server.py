@@ -106,6 +106,59 @@ def get_flights(lat, lon, dist):
     raise last_error or RuntimeError("No feed available")
 
 
+# Find one aircraft anywhere in the world by ICAO hex, callsign or
+# registration (search box and watchlist). Same feeds, same 1 request/second.
+LOCATE_UPSTREAMS = [
+    {"hex": "https://opendata.adsb.fi/api/v2/hex/{}",
+     "callsign": "https://opendata.adsb.fi/api/v2/callsign/{}",
+     "reg": "https://opendata.adsb.fi/api/v2/registration/{}"},
+    {"hex": "https://api.adsb.lol/v2/hex/{}",
+     "callsign": "https://api.adsb.lol/v2/callsign/{}",
+     "reg": "https://api.adsb.lol/v2/reg/{}"},
+]
+
+_locate_cache = {}
+
+
+def get_located(kind, value):
+    """JSON text with an "ac" list: the aircraft if a feed has a position
+    for it, an empty list if every feed answered but none is receiving it."""
+    key = (kind, value.lower())
+    hit = _locate_cache.get(key)
+    if hit and time.time() - hit[0] < 10:
+        return hit[1]
+    if len(_locate_cache) > 200:
+        _locate_cache.clear()
+
+    last_error = None
+    answered = False
+    for upstream in LOCATE_UPSTREAMS:
+        try:
+            wait_for_slot()
+            request = urllib.request.Request(
+                upstream[kind].format(urllib.parse.quote(value, safe="")),
+                headers={"Accept": "application/json",
+                         "User-Agent": "osint-map-local/1.0"},
+            )
+            with urllib.request.urlopen(request, timeout=10) as response:
+                body = response.read().decode("utf-8")
+            aircraft = json.loads(body).get("ac") or []
+            answered = True
+            if any(isinstance(a.get("lat"), (int, float)) for a in aircraft):
+                _locate_cache[key] = (time.time(), body)
+                return body
+        except Exception as error:  # noqa: BLE001
+            last_error = error
+            print(f"Locate failed ({error})")
+
+    if not answered:
+        raise last_error or RuntimeError("No feed available")
+
+    body = json.dumps({"ac": []})
+    _locate_cache[key] = (time.time(), body)
+    return body
+
+
 # Aircraft photos (Planespotters.net public API). Their API asks callers to
 # identify themselves, so edit the User-Agent below to name your project.
 PHOTO_USER_AGENT = "osint-map-local/1.0 (personal non-commercial project)"
@@ -979,6 +1032,23 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json(400, {"error": "Bad parameters"})
             try:
                 return self.send_json(200, get_photo(kind, value))
+            except Exception as error:  # noqa: BLE001
+                return self.send_json(502, {"error": str(error)})
+
+        if url.path == "/api/locate":
+            query = urllib.parse.parse_qs(url.query)
+            kind = (query.get("kind") or [""])[0]
+            value = (query.get("value") or [""])[0]
+            if kind == "hex":
+                valid = re.fullmatch(r"[0-9a-fA-F]{6}", value)
+            elif kind in ("callsign", "reg"):
+                valid = re.fullmatch(r"[A-Za-z0-9-]{3,10}", value)
+            else:
+                valid = None
+            if not valid:
+                return self.send_json(400, {"error": "Bad parameters"})
+            try:
+                return self.send_json(200, get_located(kind, value))
             except Exception as error:  # noqa: BLE001
                 return self.send_json(502, {"error": str(error)})
 

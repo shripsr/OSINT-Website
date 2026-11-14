@@ -1364,3 +1364,130 @@ body:has(#flightPanel.visible) .inspection-panel {
 .airport-row .live-tag {
     color: var(--accent);
 }
+
+
+/* Watchlist panel + "watched" markers */
+
+.flight-badge.watched {
+    color: var(--green);
+    border-color: var(--green);
+}
+
+.secondary-button.watched {
+    color: var(--green);
+    border-color: var(--green);
+}
+
+.watch-add {
+    display: flex;
+    gap: 6px;
+}
+
+.watch-add input {
+    flex: 1;
+    min-width: 0;
+    padding: 9px;
+
+    background: #202c39;
+    color: var(--text);
+
+    border: 1px solid var(--border);
+    outline: none;
+
+    font-family: monospace;
+    font-size: 12px;
+    text-transform: uppercase;
+}
+
+.watch-add input:focus {
+    border-color: var(--accent);
+}
+
+.watch-add button {
+    padding: 0 12px;
+
+    background: var(--accent-dark);
+    color: white;
+
+    border: none;
+    cursor: pointer;
+
+    font-size: 10px;
+    letter-spacing: 1px;
+}
+
+.watch-add button:hover {
+    background: #009bb5;
+}
+
+.watch-hint,
+.watch-note {
+    margin: 8px 0;
+
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 1.4;
+}
+
+.watch-hint:empty {
+    display: none;
+}
+
+.watch-note {
+    margin-bottom: 0;
+    font-size: 9px;
+}
+
+.watch-row {
+    display: flex;
+
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-left: 3px solid var(--border);
+    border-radius: 4px;
+}
+
+.watch-row:hover {
+    border-color: var(--accent);
+}
+
+.watch-row.live {
+    border-left-color: var(--green);
+}
+
+.watch-row.away {
+    border-left-color: var(--accent);
+}
+
+.watch-row.live .airport-row-detail {
+    color: var(--green);
+}
+
+.watch-row button {
+    background: transparent;
+    color: inherit;
+
+    border: none;
+    cursor: pointer;
+
+    font-family: inherit;
+}
+
+.watch-row-main {
+    flex: 1;
+    min-width: 0;
+    padding: 7px 9px;
+
+    text-align: left;
+}
+
+.watch-row-remove {
+    padding: 0 10px;
+
+    color: var(--muted) !important;
+    font-size: 16px;
+}
+
+.watch-row-remove:hover {
+    color: var(--red) !important;
+}

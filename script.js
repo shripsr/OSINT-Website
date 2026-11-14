@@ -237,6 +237,8 @@ function inspectLocation(lat, lon, name = "", description = "", id = null, addre
     // opening a location closes the airport
     if (typeof closeAirportPanel === "function")
         closeAirportPanel();
+    if (typeof closeWatchlistPanel === "function")
+        closeWatchlistPanel();
     // Remove only the previous temporary marker.
     // Never remove a permanently saved marker.
     if (selectedMarker && !selectedMarkerId) {

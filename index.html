@@ -100,6 +100,12 @@
             <span class="item-count" id="flightCount">OFF</span>
         </div>
 
+        <div class="menu-item" id="watchlistToggle">
+            <span>&#9673;</span>
+            Watchlist
+            <span class="item-count" id="watchlistCount">0</span>
+        </div>
+
 
         <div class="section-title">BASE MAP</div>
 
@@ -346,6 +352,10 @@
                     FOLLOW AIRCRAFT
                 </button>
 
+                <button id="watchFlight" class="secondary-button">
+                    ADD TO WATCHLIST
+                </button>
+
                 <button id="pinFlight" class="secondary-button">
                     PIN POSITION AS LOCATION
                 </button>
@@ -420,6 +430,52 @@
                     Earlier flights go back as far as the free plan allows
                     (usually 1-2 hours). Codeshares are hidden. Rows marked
                     LIVE are on the map; click them to follow the aircraft.
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <!-- WATCHLIST: aircraft and flights to keep an eye on -->
+
+        <div class="flight-panel" id="watchlistPanel">
+
+            <div class="panel-header">
+
+                <span>WATCHLIST</span>
+
+                <button id="closeWatchlistPanel">×</button>
+
+            </div>
+
+            <div class="panel-content">
+
+                <div class="watch-add">
+
+                    <input
+                        id="watchlistInput"
+                        type="text"
+                        maxlength="10"
+                        autocomplete="off"
+                        spellcheck="false"
+                        placeholder="CALLSIGN / REG / HEX"
+                        aria-label="Callsign, registration or ICAO hex to watch"
+                    >
+
+                    <button id="watchlistAdd" type="button">ADD</button>
+
+                </div>
+
+                <div class="watch-hint" id="watchlistHint"></div>
+
+                <div class="airport-list" id="watchlistList"></div>
+
+                <div class="watch-hint" id="watchlistEmpty"></div>
+
+                <div class="watch-note">
+                    Click an entry to find it anywhere in the world.
+                    Watched aircraft get a green ring on the map.
                 </div>
 
             </div>
