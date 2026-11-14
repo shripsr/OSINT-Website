@@ -2202,6 +2202,8 @@ async function loadFlightPhoto(rec) {
 }
 function selectFlight(hex) {
     closeAirportPanel();
+    if (typeof closeStationPanel === "function")
+        closeStationPanel();
     closeWatchlistPanel();
     selectedFlightHex = hex;
     if (map.getLayer(FLIGHT_SELECTED_LAYER)) {
@@ -2969,6 +2971,8 @@ function toggleWatchlistPanel() {
     // The panels share the left side of the map
     deselectFlight();
     closeAirportPanel();
+    if (typeof closeStationPanel === "function")
+        closeStationPanel();
     if (typeof clearSelection === "function")
         clearSelection();
     panel.classList.add("visible");
@@ -3229,6 +3233,8 @@ function selectAirport(icao) {
         return;
     deselectFlight();
     closeWatchlistPanel();
+    if (typeof closeStationPanel === "function")
+        closeStationPanel();
     // The airport panel and the location panel share the left side:
     // opening an airport closes the location (and removes its unsaved marker)
     if (typeof clearSelection === "function")

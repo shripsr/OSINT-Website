@@ -9,6 +9,7 @@ browser CORS blocking. Needs Python 3.7+. No packages to install.
     then open  http://localhost:8080
 
 Flight data: adsb.fi, airplanes.live, adsb.lol (tried in order).
+Transit lines and vehicles: Transitous (transitous.org).
 Personal, non-commercial use. Credit adsb.fi.
 """
 
@@ -183,6 +184,66 @@ def get_photo(kind, value):
     json.loads(body)
     _photo_cache[key] = (time.time(), body)
     return body
+
+
+# ----------------------------------------------
+# Public transit: line maps and live vehicles (Transitous, transitous.org)
+#
+# A free community-run service built from the world's open timetables; no
+# key. The relay identifies this app to them, asks one thing at a time and
+# remembers line maps (they are large and rarely change), so moving around
+# an area you have already seen costs them nothing.
+# ----------------------------------------------
+
+TRANSIT_API_URL = os.environ.get("TRANSIT_API_URL", "https://api.transitous.org")
+TRANSIT_PATHS = {
+    "trips": "/api/v6/map/trips",                  # vehicles in service
+    "routes": "/api/experimental/map/routes",      # line shapes
+    "details": "/api/experimental/map/route-details",  # one whole route
+    "stops": "/api/v6/map/stops",                  # stations in an area
+    "stoptimes": "/api/v6/stoptimes",              # a station's departures / arrivals
+}
+TRANSIT_ROUTES_TTL = 6 * 3600
+TRANSIT_ROUTES_KEEP = 24
+
+_transit_locks = {kind: threading.Lock() for kind in TRANSIT_PATHS}
+_transit_routes_cache = {}
+
+
+def get_transit(kind, params):
+    """Returns (status, body bytes, body is gzip-compressed)."""
+    query = urllib.parse.urlencode(params)
+    with _transit_locks[kind]:
+        remember = kind in ("routes", "details", "stops")
+        if remember:
+            hit = _transit_routes_cache.get((kind, query))
+            if hit and time.time() - hit[0] < TRANSIT_ROUTES_TTL:
+                return hit[1]
+
+        # The answers are big (tens of MB of JSON for a city): fetch them
+        # compressed and hand them to the browser still compressed.
+        request = urllib.request.Request(
+            f"{TRANSIT_API_URL}{TRANSIT_PATHS[kind]}?{query}",
+            headers={"Accept": "application/json", "Accept-Encoding": "gzip",
+                     "User-Agent": PHOTO_USER_AGENT},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                result = (200, response.read(),
+                          response.headers.get("Content-Encoding", "").lower() == "gzip")
+        except urllib.error.HTTPError as error:
+            # 422 = "too many routes" in the area; the page reacts to that
+            if error.code not in (400, 422):
+                raise
+            result = (error.code, error.read(),
+                      error.headers.get("Content-Encoding", "").lower() == "gzip")
+
+        if remember:
+            while len(_transit_routes_cache) >= TRANSIT_ROUTES_KEEP:
+                oldest = min(_transit_routes_cache, key=lambda k: _transit_routes_cache[k][0])
+                del _transit_routes_cache[oldest]
+            _transit_routes_cache[(kind, query)] = (time.time(), result)
+        return result
 
 
 # ----------------------------------------------
@@ -1051,6 +1112,62 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json(200, get_located(kind, value))
             except Exception as error:  # noqa: BLE001
                 return self.send_json(502, {"error": str(error)})
+
+        if url.path == "/api/transit":
+            query = urllib.parse.parse_qs(url.query)
+
+            def one(name):
+                return (query.get(name) or [""])[0]
+
+            kind = one("kind")
+            corner = r"-?\d{1,2}(\.\d{1,6})?,-?\d{1,3}(\.\d{1,6})?"
+            stamp = r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ"
+            if kind == "details":
+                params = {"routeIdx": one("routeIdx")}
+                valid = re.fullmatch(r"\d{1,9}", params["routeIdx"])
+            elif kind == "stops":
+                params = {"min": one("min"), "max": one("max"),
+                          "grouped": one("grouped") or "true", "modes": one("modes")}
+                valid = (re.fullmatch(corner, params["min"])
+                         and re.fullmatch(corner, params["max"])
+                         and params["grouped"] in ("true", "false")
+                         and re.fullmatch(r"[A-Z_,]{1,200}", params["modes"]))
+            elif kind == "stoptimes":
+                params = {"stopId": one("stopId"), "n": one("n") or "30",
+                          "arriveBy": one("arriveBy") or "false",
+                          "direction": one("direction") or "LATER", "mode": one("mode")}
+                valid = (re.fullmatch(r"[^\x00-\x1f]{1,200}", params["stopId"])
+                         and re.fullmatch(r"\d{1,2}", params["n"])
+                         and params["arriveBy"] in ("true", "false")
+                         and params["direction"] in ("EARLIER", "LATER")
+                         and re.fullmatch(r"[A-Z_,]{1,200}", params["mode"]))
+            else:
+                params = {"zoom": one("zoom"), "min": one("min"), "max": one("max")}
+                valid = (kind in TRANSIT_PATHS
+                         and re.fullmatch(r"\d{1,2}", params["zoom"])
+                         and re.fullmatch(corner, params["min"])
+                         and re.fullmatch(corner, params["max"]))
+            if valid and kind == "trips":
+                params.update(startTime=one("startTime"), endTime=one("endTime"),
+                              precision=one("precision") or "5")
+                valid = (re.fullmatch(stamp, params["startTime"])
+                         and re.fullmatch(stamp, params["endTime"])
+                         and re.fullmatch(r"[0-6]", params["precision"]))
+            if not valid:
+                return self.send_json(400, {"error": "Bad parameters"})
+            try:
+                status, body, gzipped = get_transit(kind, params)
+            except Exception as error:  # noqa: BLE001
+                print(f"Transitous failed ({error})")
+                return self.send_json(502, {"error": str(error)})
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            if gzipped:
+                self.send_header("Content-Encoding", "gzip")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
 
         if url.path != "/api/flights":
             return super().do_GET()

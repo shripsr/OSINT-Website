@@ -3088,6 +3088,8 @@ function selectFlight(hex: string): void {
 
     closeAirportPanel();
 
+    if (typeof closeStationPanel === "function") closeStationPanel();
+
     closeWatchlistPanel();
 
     selectedFlightHex = hex;
@@ -4211,6 +4213,8 @@ function toggleWatchlistPanel(): void {
 
     closeAirportPanel();
 
+    if (typeof closeStationPanel === "function") closeStationPanel();
+
     if (typeof clearSelection === "function") clearSelection();
 
     panel.classList.add("visible");
@@ -4615,6 +4619,8 @@ function selectAirport(icao: string): void {
     deselectFlight();
 
     closeWatchlistPanel();
+
+    if (typeof closeStationPanel === "function") closeStationPanel();
 
     // The airport panel and the location panel share the left side:
     // opening an airport closes the location (and removes its unsaved marker)

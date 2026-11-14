@@ -106,6 +106,13 @@
             <span class="item-count" id="watchlistCount">0</span>
         </div>
 
+        <!-- Lines, stations and live vehicles together (see transit.ts) -->
+        <div class="menu-item" id="transitToggle">
+            <span>&#9635;</span>
+            Transit
+            <span class="item-count" id="transitCount">OFF</span>
+        </div>
+
 
         <div class="section-title">BASE MAP</div>
 
@@ -437,6 +444,46 @@
         </div>
 
 
+        <!-- STATION: next departures / arrivals (see transit.ts) -->
+
+        <div class="flight-panel airport-panel" id="stationPanel">
+
+            <div class="panel-header">
+
+                <span>STATION</span>
+
+                <button id="closeStationPanel">×</button>
+
+            </div>
+
+            <div class="panel-content">
+
+                <div class="flight-callsign station-name" id="stationName">--</div>
+
+                <div class="flight-subtitle" id="stationSub"></div>
+
+                <div class="airport-tabs">
+                    <button id="stationTabDepartures" class="airport-tab active">DEPARTURES</button>
+                    <button id="stationTabArrivals" class="airport-tab">ARRIVALS</button>
+                </div>
+
+                <div class="airport-list" id="stationList"></div>
+
+                <div class="airport-empty" id="stationEmpty"></div>
+
+                <div class="airport-note">
+                    Soonest first, in the station's local time. Times are
+                    from the timetable; rows showing "on time", "late" or
+                    "early" include the operator's live prediction, rows
+                    marked "scheduled" do not. Buses are left out. Rows
+                    marked ON MAP jump to the vehicle.
+                </div>
+
+            </div>
+
+        </div>
+
+
         <!-- WATCHLIST: aircraft and flights to keep an eye on -->
 
         <div class="flight-panel" id="watchlistPanel">
@@ -538,7 +585,7 @@
         </div>
 
         <div>
-            © OPENSTREETMAP | CARTO | ADS-B: <a href="https://adsb.fi" target="_blank" rel="noopener noreferrer">ADSB.FI</a>
+            © OPENSTREETMAP | CARTO | ADS-B: <a href="https://adsb.fi" target="_blank" rel="noopener noreferrer">ADSB.FI</a> | TRANSIT: <a href="https://transitous.org/sources/" target="_blank" rel="noopener noreferrer">TRANSITOUS</a>
         </div>
 
     </footer>
@@ -551,6 +598,10 @@
     <!-- LIVE FLIGHT TRACKING (must load before script.js) -->
 
     <script src="flights.js"></script>
+
+    <!-- TRANSIT LINES + LIVE VEHICLES (after flights.js, before script.js) -->
+
+    <script src="transit.js"></script>
 
     <!-- MAIN SCRIPT -->
 

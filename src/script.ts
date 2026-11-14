@@ -246,6 +246,9 @@ function initializeMap(): void {
             // Clicking an aircraft opens flight details instead
             if (isFlightAtPoint(e.point)) return;
 
+            // Clicking a transit vehicle opens its popup instead
+            if (isTransitAtPoint(e.point)) return;
+
             inspectLocation(
                 e.lngLat.lat,
                 e.lngLat.lng
@@ -271,6 +274,11 @@ function initializeMap(): void {
         // LIVE FLIGHT TRACKING (see flights.js)
 
         initializeFlights();
+
+
+        // TRANSIT LINES + LIVE VEHICLES (see transit.js)
+
+        initializeTransit();
 
     }
 
@@ -415,6 +423,7 @@ function inspectLocation(
     // opening a location closes the airport
     if (typeof closeAirportPanel === "function") closeAirportPanel();
     if (typeof closeWatchlistPanel === "function") closeWatchlistPanel();
+    if (typeof closeStationPanel === "function") closeStationPanel();
 
     // Remove only the previous temporary marker.
     // Never remove a permanently saved marker.
