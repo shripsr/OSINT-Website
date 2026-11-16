@@ -1032,6 +1032,33 @@ body:has(#flightPanel.visible) .inspection-panel {
 }
 
 
+/* Ship legend: the same box, moved over when the flight one is showing too */
+
+.flight-hud.visible ~ .ship-hud {
+    left: 278px;
+}
+
+.ship-legend-note {
+    flex: 0 0 100%;
+
+    opacity: 0.8;
+    line-height: 1.5;
+}
+
+/* Photo at the top of a ship's popup */
+
+.ship-popup-photo {
+    display: block;
+
+    width: 100%;
+    max-height: 150px;
+    margin-bottom: 8px;
+
+    object-fit: cover;
+    border-radius: 2px;
+}
+
+
 /* "Zoom in" message */
 
 .flight-notice {
@@ -1157,6 +1184,12 @@ body:has(#flightPanel.visible) .inspection-panel {
 .transit-popup-button:hover {
     background: var(--panel-light);
     border-color: var(--accent);
+}
+
+/* The same button as a link (ship popup) */
+a.transit-popup-button {
+    width: fit-content;
+    text-decoration: none;
 }
 
 .transit-popup-live {

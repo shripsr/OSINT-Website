@@ -13,16 +13,24 @@ Transit lines and vehicles: Transitous (transitous.org).
 Personal, non-commercial use. Credit adsb.fi.
 """
 
+import base64
 import csv
+import datetime
+import gzip
 import io
 import json
 import os
 import re
+import socket
+import ssl
+import struct
+import tempfile
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
@@ -964,6 +972,1398 @@ def get_airports():
             raise
 
 
+# ----------------------------------------------
+# Ships worldwide: aisstream.io (free, needs a key)
+#
+# aisstream sends live AIS messages over a WebSocket, and does not accept
+# connections from a web page, so this relay holds the connection. It listens
+# to the whole world, remembers each ship's latest position (for half an hour)
+# and details (for half a day), and hands the page the ships inside the area
+# it asks for.
+#
+# Ships under way report every few seconds, but moored ones only every three
+# minutes and names / types every six, so a fresh start takes minutes to fill
+# in. To have the map full the moment the ship layer is switched on:
+#   - the stream runs for as long as this server does, not just while a page
+#     is looking
+#   - everything known is saved to .ships_cache.json every two minutes and
+#     when the server stops, and read back when it starts
+#
+# Get a free key at https://aisstream.io and put it in .env:
+#     AISSTREAM_API_KEY=...
+# Without it the page shows Digitraffic's ships (Finland / Baltic) instead.
+# ----------------------------------------------
+
+AISSTREAM_URL = os.environ.get("AISSTREAM_URL", "wss://stream.aisstream.io/v0/stream")
+AISSTREAM_API_KEY = os.environ.get("AISSTREAM_API_KEY", "").strip()
+
+SHIP_MAX_AGE = 1800         # a position older than this is not shown (seconds)
+SHIP_KEEP = 12 * 3600       # forget a ship (its name, type, ...) not heard from for this long
+SHIP_SAVE_EVERY = 120
+SHIP_CACHE_FILE = os.path.join(ROOT, ".ships_cache.json")   # dotfile: never served, git-ignored
+SHIP_REPLY_LIMIT = 6000     # most ships sent to the page at once
+
+SHIP_POSITION_KINDS = ("PositionReport", "StandardClassBPositionReport",
+                       "ExtendedClassBPositionReport")
+SHIP_MESSAGE_KINDS = SHIP_POSITION_KINDS + ("ShipStaticData", "StaticDataReport")
+
+_ships_lock = threading.Lock()
+_ships = {}                 # MMSI -> what we know about that ship
+_ship_trails = {}           # MMSI -> where it has been: [[lon, lat, time in ms], ...]
+
+SHIP_TRAIL_POINTS = 180     # most points kept per ship (the oldest are dropped)
+SHIP_TRAIL_EVERY = 60       # seconds between two points
+SHIP_TRAIL_MOVED = 0.0005   # degrees (about 50 m): closer than this is "has not moved"
+SHIP_TRAIL_MAX_KNOTS = 70   # a jump faster than this is a bad position, not a voyage
+
+
+def note_ship_trail(mmsi, ship):
+    """Add the ship's new position to its trail (call with _ships_lock held).
+    Only ships that actually move get one, so this stays small."""
+    point = [ship["lon"], ship["lat"], ship["t"]]
+    trail = _ship_trails.get(mmsi)
+    if not trail:
+        _ship_trails[mmsi] = [point]
+        return
+    last = trail[-1]
+    seconds = (point[2] - last[2]) / 1000
+    if seconds < SHIP_TRAIL_EVERY:
+        return
+    d_lat = abs(point[1] - last[1])
+    d_lon = abs(point[0] - last[0])
+    d_lon = min(d_lon, 360 - d_lon)
+    if d_lat < SHIP_TRAIL_MOVED and d_lon < SHIP_TRAIL_MOVED:
+        return
+    # (rough: a degree is at most 60 nautical miles)
+    if max(d_lat, d_lon * 0.3) * 60 / (seconds / 3600) > SHIP_TRAIL_MAX_KNOTS:
+        return
+    trail.append(point)
+    if len(trail) > SHIP_TRAIL_POINTS:
+        del trail[0]
+
+
+def _ship_eta(value):
+    """aisstream's {"Month": 11, "Day": 17, "Hour": 20, "Minute": 30} -> "11-17T20:30"."""
+    if not isinstance(value, dict):
+        return ""
+    month, day, hour, minute = (_clean_number(value.get(k)) or 0
+                                for k in ("Month", "Day", "Hour", "Minute"))
+    if not (1 <= month <= 12 and 1 <= day <= 31):
+        return ""                                    # 0 means "not set"
+    return "%02d-%02dT%02d:%02d" % (month, day, hour, minute)
+_ship_stream = {"thread": None, "listening_since": 0.0, "heard_at": 0.0,
+                "error": "", "blocked_until": 0.0}
+
+
+class WebSocketClient:
+    """Just enough of the WebSocket protocol (RFC 6455) to read a feed."""
+
+    def __init__(self, url, timeout):
+        parts = urllib.parse.urlparse(url)
+        secure = parts.scheme == "wss"
+        host = parts.hostname
+        port = parts.port or (443 if secure else 80)
+        self.sock = socket.create_connection((host, port), timeout=timeout)
+        try:
+            if secure:
+                self.sock = ssl.create_default_context().wrap_socket(
+                    self.sock, server_hostname=host)
+            self.reader = self.sock.makefile("rb")
+            key = base64.b64encode(os.urandom(16)).decode("ascii")
+            self.sock.sendall((
+                f"GET {parts.path or '/'} HTTP/1.1\r\n"
+                f"Host: {host}\r\n"
+                "Upgrade: websocket\r\n"
+                "Connection: Upgrade\r\n"
+                f"Sec-WebSocket-Key: {key}\r\n"
+                "Sec-WebSocket-Version: 13\r\n"
+                "User-Agent: osint-map-local/1.0\r\n\r\n").encode("ascii"))
+            status = self.reader.readline().decode("latin-1").strip()
+            if " 101" not in status:
+                raise ConnectionError(f"WebSocket refused: {status or 'no answer'}")
+            while self.reader.readline() not in (b"\r\n", b"\n", b""):
+                pass                                 # the rest of the headers
+        except Exception:
+            self.close()
+            raise
+
+    def _read(self, count):
+        data = self.reader.read(count)
+        if len(data) < count:
+            raise ConnectionError("WebSocket closed")
+        return data
+
+    def send(self, payload, opcode=0x1):
+        """One frame. Clients must mask what they send."""
+        if isinstance(payload, str):
+            payload = payload.encode("utf-8")
+        size = len(payload)
+        if size < 126:
+            header = struct.pack("!BB", 0x80 | opcode, 0x80 | size)
+        elif size < 65536:
+            header = struct.pack("!BBH", 0x80 | opcode, 0x80 | 126, size)
+        else:
+            header = struct.pack("!BBQ", 0x80 | opcode, 0x80 | 127, size)
+        mask = os.urandom(4)
+        masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+        self.sock.sendall(header + mask + masked)
+
+    def receive(self):
+        """The next whole message, as bytes."""
+        parts = []
+        while True:
+            first, second = self._read(2)
+            opcode = first & 0x0F
+            size = second & 0x7F
+            if size == 126:
+                size = struct.unpack("!H", self._read(2))[0]
+            elif size == 127:
+                size = struct.unpack("!Q", self._read(8))[0]
+            if size > 4 * 1024 * 1024:
+                raise ConnectionError("WebSocket message too large")
+            mask = self._read(4) if second & 0x80 else None
+            data = self._read(size)
+            if mask:
+                data = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
+            if opcode == 0x8:
+                raise ConnectionError("WebSocket closed by the other side")
+            if opcode == 0x9:                        # ping: answer it
+                self.send(data, 0xA)
+                continue
+            if opcode == 0xA:                        # pong
+                continue
+            parts.append(data)
+            if first & 0x80:                         # last piece of the message
+                return b"".join(parts)
+
+    def close(self):
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
+
+def read_ship_message(message, now):
+    """Fold one aisstream message into _ships (call with _ships_lock held)."""
+    kind = message.get("MessageType")
+    meta = message.get("MetaData")
+    body = message.get("Message")
+    body = body.get(kind) if isinstance(body, dict) else None
+    if not isinstance(meta, dict) or not isinstance(body, dict):
+        return
+    mmsi = meta.get("MMSI")
+    if not isinstance(mmsi, int) or isinstance(mmsi, bool):
+        return
+
+    ship = _ships.get(mmsi)
+    if ship is None:
+        ship = _ships[mmsi] = dict(SHIP_BLANK)
+    ship["seen"] = now
+
+    name = _clean_text(meta.get("ShipName"))
+    if name:
+        ship["name"] = name
+
+    def size(dimension, fore, aft):
+        if not isinstance(dimension, dict):
+            return 0
+        return (_clean_number(dimension.get(fore)) or 0) + (_clean_number(dimension.get(aft)) or 0)
+
+    if kind in SHIP_POSITION_KINDS:
+        lat = _clean_number(body.get("Latitude"))
+        lon = _clean_number(body.get("Longitude"))
+        if lat is None or lon is None:
+            lat = _clean_number(meta.get("latitude"))
+            lon = _clean_number(meta.get("longitude"))
+        # (91 / 181 mean "no position")
+        if lat is None or lon is None or abs(lat) > 90 or abs(lon) > 180:
+            return
+        ship.update(lat=round(lat, 5), lon=round(lon, 5), t=int(now * 1000), credit="",
+                    sog=_clean_number(body.get("Sog")),
+                    cog=_clean_number(body.get("Cog")),
+                    heading=_clean_number(body.get("TrueHeading")))
+        if "NavigationalStatus" in body:
+            ship["nav"] = _clean_number(body.get("NavigationalStatus"))
+        note_ship_trail(mmsi, ship)
+
+    elif kind == "ShipStaticData":
+        ship.update(type=_clean_number(body.get("Type")) or 0,
+                    callSign=_clean_text(body.get("CallSign")),
+                    imo=_clean_number(body.get("ImoNumber")) or 0,
+                    destination=_clean_text(body.get("Destination")),
+                    draught=_clean_number(body.get("MaximumStaticDraught")) or 0,
+                    length=size(body.get("Dimension"), "A", "B"),
+                    beam=size(body.get("Dimension"), "C", "D"))
+
+        ship["eta"] = _ship_eta(body.get("Eta"))
+
+    elif kind == "StaticDataReport":                 # small craft: sent in two halves
+        part_a = body.get("ReportA")
+        part_b = body.get("ReportB")
+        if isinstance(part_a, dict) and part_a.get("Valid") and _clean_text(part_a.get("Name")):
+            ship["name"] = _clean_text(part_a.get("Name"))
+        if isinstance(part_b, dict) and part_b.get("Valid"):
+            ship.update(type=_clean_number(part_b.get("ShipType")) or 0,
+                        callSign=_clean_text(part_b.get("CallSign")),
+                        length=size(part_b.get("Dimension"), "A", "B"),
+                        beam=size(part_b.get("Dimension"), "C", "D"))
+
+
+SHIP_BLANK = {"lat": None, "lon": None, "t": 0, "sog": None, "cog": None,
+              "heading": None, "nav": None, "name": "", "type": 0, "callSign": "",
+              "imo": 0, "destination": "", "draught": 0, "length": 0, "beam": 0,
+              "credit": "",      # who must be credited for the position ("" = aisstream)
+              "eta": "",         # when the crew expects to arrive: "MM-DDTHH:MM" (UTC)
+              "seen": 0}
+
+
+def save_ships():
+    """Write everything known to disk, so a restart does not start from nothing."""
+    with _ships_lock:
+        if not _ships:
+            return
+        snapshot = {"savedAt": time.time(),
+                    "listeningSince": _ship_stream["listening_since"],
+                    "ships": dict(_ships)}
+    try:
+        temp = SHIP_CACHE_FILE + ".tmp"
+        with open(temp, "w", encoding="utf-8") as handle:
+            json.dump(snapshot, handle, separators=(",", ":"))
+        os.replace(temp, SHIP_CACHE_FILE)
+    except Exception as error:  # noqa: BLE001
+        print(f"Ship cache could not be saved ({error})")
+
+
+def load_ships():
+    try:
+        with open(SHIP_CACHE_FILE, encoding="utf-8") as handle:
+            saved = json.load(handle)
+        now = time.time()
+        with _ships_lock:
+            for mmsi, ship in saved["ships"].items():
+                if isinstance(ship, dict) and now - (_clean_number(ship.get("seen")) or 0) < SHIP_KEEP:
+                    _ships[int(mmsi)] = dict(
+                        SHIP_BLANK, **{k: v for k, v in ship.items() if k in SHIP_BLANK})
+            # Only a short gap since it was saved: the picture is still whole
+            if now - saved["savedAt"] < 600:
+                _ship_stream["listening_since"] = _clean_number(saved.get("listeningSince")) or 0.0
+            fresh = sum(1 for s in _ships.values()
+                        if s["lat"] is not None and now - s["t"] / 1000 < SHIP_MAX_AGE)
+        print(f"Ships: {len(_ships)} remembered from last time, {fresh} with a recent position")
+    except FileNotFoundError:
+        pass
+    except Exception as error:  # noqa: BLE001
+        print(f"Ship cache could not be read ({error}), starting empty")
+
+
+def start_ship_stream():
+    """Start listening, unless that is already happening (or pointless)."""
+    if not AISSTREAM_API_KEY:
+        return
+    with _ships_lock:
+        if _ship_stream["thread"] is None and time.time() >= _ship_stream["blocked_until"]:
+            _ship_stream["thread"] = threading.Thread(target=run_ship_stream, daemon=True)
+            _ship_stream["thread"].start()
+
+
+def run_ship_stream():
+    """Background thread: stay connected for as long as the server runs."""
+    failures = 0
+    saved = time.time()
+    while True:
+        with _ships_lock:
+            if time.time() < _ship_stream["blocked_until"]:
+                _ship_stream["thread"] = None        # key refused: get_ships retries later
+                return
+
+        client = None
+        heard = False
+        try:
+            client = WebSocketClient(AISSTREAM_URL, timeout=30)
+            # (aisstream hangs up unless this arrives within 3 seconds)
+            client.send(json.dumps({
+                "APIKey": AISSTREAM_API_KEY,
+                "BoundingBoxes": [[[-90, -180], [90, 180]]],
+                "FilterMessageTypes": list(SHIP_MESSAGE_KINDS),
+            }))
+            print("Ship stream connected (aisstream.io)")
+            pruned = time.time()
+
+            while True:
+                message = json.loads(client.receive())
+                now = time.time()
+                heard = True
+
+                if not isinstance(message, dict):
+                    continue
+                if "error" in message:               # e.g. "Api Key Is Not Valid"
+                    raise PermissionError(str(message["error"]))
+
+                with _ships_lock:
+                    if not _ship_stream["listening_since"]:
+                        _ship_stream["listening_since"] = now
+                    _ship_stream["error"] = ""
+                    _ship_stream["heard_at"] = now
+                    read_ship_message(message, now)
+                    if now - pruned > 60:
+                        pruned = now
+                        for mmsi in [m for m, s in _ships.items()
+                                     if now - s["seen"] > SHIP_KEEP]:
+                            del _ships[mmsi]
+                            _ship_trails.pop(mmsi, None)
+                failures = 0
+
+                if now - saved > SHIP_SAVE_EVERY:
+                    saved = now
+                    save_ships()
+
+        except PermissionError as error:
+            # A wrong key will not fix itself: stop asking for ten minutes
+            print(f"aisstream refused the key ({error})")
+            with _ships_lock:
+                _ship_stream["error"] = str(error)
+                _ship_stream["blocked_until"] = time.time() + 600
+        except Exception as error:  # noqa: BLE001
+            failures += 1
+            # aisstream answers a wrong key by hanging up without a word
+            refused = isinstance(error, ConnectionError) and not heard and failures >= 3
+            with _ships_lock:
+                _ship_stream["error"] = str(error)
+                if refused:
+                    _ship_stream["error"] = "aisstream.io hangs up straight away (wrong API key?)"
+                    _ship_stream["blocked_until"] = time.time() + 600
+            if refused:
+                print("aisstream.io hangs up straight away: check AISSTREAM_API_KEY in .env. "
+                      "Trying again in 10 minutes; ships come from Digitraffic until then.")
+            else:
+                print(f"Ship stream failed ({error}), reconnecting")
+                time.sleep(min(60, 3 * failures))
+        finally:
+            if client:
+                client.close()
+
+
+# ----------------------------------------------
+# More ships for the area on screen: Pelyr (pelyr.com, free key)
+#
+# Pelyr's HTTPS API answers "which ships are in this box?" at once, names and
+# types included, so the area you are looking at fills in immediately instead
+# of waiting for each ship's next report on the aisstream feed. It also hears
+# ships aisstream does not (and the other way round); the two are merged, the
+# newer position of a ship winning.
+#
+# The free plan allows 2 requests a minute and 1,000 ships per answer, so the
+# relay asks only for the area a page is showing: when it changes, and once a
+# minute while it stays the same. Nothing is asked while no page has the ship
+# layer on.
+#
+# Licence (Pelyr Data Licence 2.0): free keys are for NON-COMMERCIAL use, the
+# data may be shown on your own map but not passed on to others, and wherever
+# it is shown it must be credited ("AIS data from Pelyr (pelyr.com), Pelyr
+# Data Licence 2.0"). The page shows that credit; keep it there.
+#
+# Get a free key at https://dashboard.pelyr.com/stream and put it in .env:
+#     PELYR_API_KEY=...
+# ----------------------------------------------
+
+PELYR_API_URL = os.environ.get("PELYR_API_URL", "https://api.pelyr.com")
+PELYR_API_KEY = os.environ.get("PELYR_API_KEY", "").strip()
+
+PELYR_MIN_INTERVAL = 31     # seconds between requests (the free plan allows 2 a minute)
+PELYR_SAME_BOX = 60         # ask again for an unchanged area this often
+PELYR_MAX = 1000            # ships per answer on the free plan
+PELYR_CREDIT = "AIS data from Pelyr (pelyr.com), Pelyr Data Licence 2.0"
+
+_pelyr = {"busy": False, "next": 0.0, "blocked_until": 0.0,
+          "box": None, "box_at": 0.0, "credits": None, "error": "", "ok_at": 0.0}
+
+
+def pelyr_get(path, params=None):
+    query = "?" + urllib.parse.urlencode(params) if params else ""
+    request = urllib.request.Request(
+        f"{PELYR_API_URL}{path}{query}",
+        # (the key goes in this header: Pelyr refuses keys in the address)
+        headers={"Accept": "application/json", "User-Agent": "osint-map-local/1.0",
+                 "Authorization": f"Bearer {PELYR_API_KEY}"})
+    with urllib.request.urlopen(request, timeout=20) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _pelyr_time(value):
+    """'2026-11-16T03:28:13.445Z' -> seconds since 1970 (None if unreadable)."""
+    try:
+        text = _clean_text(value).replace("Z", "+00:00")
+        return datetime.datetime.fromisoformat(text).timestamp() if text else None
+    except ValueError:
+        return None
+
+
+def read_pelyr_vessels(vessels, now):
+    """Fold Pelyr's answer into _ships. Returns how many positions were news."""
+    credits = _pelyr["credits"] or {}
+    added = 0
+    with _ships_lock:
+        for vessel in vessels if isinstance(vessels, list) else []:
+            if not isinstance(vessel, dict):
+                continue
+            mmsi = vessel.get("mmsi")
+            position = vessel.get("position")
+            static = vessel.get("static")
+            if not isinstance(mmsi, int) or isinstance(mmsi, bool) or not isinstance(position, dict):
+                continue
+            # Pelyr marks reports that cannot be right (teleporting ships, bad numbers)
+            if position.get("plausibility") == "low":
+                continue
+            lat = _clean_number(position.get("lat"))
+            lon = _clean_number(position.get("lon"))
+            when = _pelyr_time(position.get("ts"))
+            if lat is None or lon is None or when is None or abs(lat) > 90 or abs(lon) > 180:
+                continue
+            when = min(when, now)
+
+            ship = _ships.get(mmsi)
+            if ship is None:
+                ship = _ships[mmsi] = dict(SHIP_BLANK)
+            ship["seen"] = max(ship["seen"], when)
+
+            if when * 1000 > ship["t"]:
+                ship.update(lat=round(lat, 5), lon=round(lon, 5), t=int(when * 1000),
+                            sog=_clean_number(position.get("sog")),
+                            cog=_clean_number(position.get("cog")),
+                            heading=_clean_number(position.get("heading")),
+                            nav=_clean_number(position.get("nav_status")),
+                            credit=credits.get(str(position.get("license"))) or PELYR_CREDIT)
+                note_ship_trail(mmsi, ship)
+                added += 1
+
+            if isinstance(static, dict):
+                # (only what Pelyr knows: never wipe a name aisstream gave us)
+                for ours, theirs, clean in (
+                        ("name", "name", _clean_text), ("callSign", "callsign", _clean_text),
+                        ("destination", "dest", _clean_text), ("type", "type", _clean_number),
+                        ("eta", "eta", _clean_text),
+                        ("imo", "imo", _clean_number), ("draught", "draught", _clean_number),
+                        ("length", "length", _clean_number), ("beam", "beam", _clean_number)):
+                    value = clean(static.get(theirs))
+                    if value:
+                        ship[ours] = value
+    return added
+
+
+def run_pelyr(box):
+    """Background thread: one request for one area."""
+    south, west, north, east = box
+    try:
+        # Once: the wording each of Pelyr's sources wants to be credited with
+        if _pelyr["credits"] is None:
+            try:
+                listed = pelyr_get("/v1/sources").get("sources")
+                _pelyr["credits"] = {
+                    str(item.get("id")): _clean_text(item.get("attribution"))
+                    for item in (listed if isinstance(listed, list) else [])
+                    if isinstance(item, dict)}
+            except urllib.error.HTTPError as error:
+                if error.code in (401, 403):
+                    raise
+                _pelyr["credits"] = {}              # the standard wording will do
+        data = pelyr_get("/v1/vessels", {
+            "bbox": f"{west:.4f},{south:.4f},{east:.4f},{north:.4f}", "max": PELYR_MAX})
+        added = read_pelyr_vessels(data.get("vessels") if isinstance(data, dict) else None,
+                                   time.time())
+        _pelyr["error"] = ""
+        _pelyr["ok_at"] = time.time()
+        print(f"Pelyr: {data.get('count', 0)} ships in view"
+              f"{' (more than the plan returns: zoom in)' if data.get('truncated') else ''}, "
+              f"{added} newer than what we had")
+    except urllib.error.HTTPError as error:
+        if error.code in (401, 403):
+            # A wrong key will not fix itself: stop asking for ten minutes
+            _pelyr["error"] = "Pelyr refused the API key"
+            _pelyr["blocked_until"] = time.time() + 600
+            print(f"Pelyr refused the key (HTTP {error.code}): check PELYR_API_KEY in .env")
+        elif error.code == 429:
+            wait = int(error.headers.get("Retry-After") or 60)
+            _pelyr["next"] = time.time() + wait
+            print(f"Pelyr asked us to slow down for {wait} s")
+        else:
+            _pelyr["error"] = f"Pelyr HTTP {error.code}"
+            print(f"Pelyr failed (HTTP {error.code})")
+    except Exception as error:  # noqa: BLE001
+        _pelyr["error"] = str(error)
+        print(f"Pelyr failed ({error})")
+    finally:
+        _pelyr["busy"] = False
+
+
+def request_pelyr(south, west, north, east):
+    """Ask Pelyr for this area in the background, if it is time to.
+    (Call with _ships_lock held: it keeps two pages from asking at once.)"""
+    if not PELYR_API_KEY:
+        return
+    now = time.time()
+    if _pelyr["busy"] or now < _pelyr["next"] or now < _pelyr["blocked_until"]:
+        return
+
+    # Pelyr's map stops at 85.05 degrees, and its boxes cannot cross the date
+    # line: of a box that does, take the wider side
+    south, north = max(south, -85.05), min(north, 85.05)
+    if west > east:
+        west, east = (west, 180.0) if 180 - west >= east + 180 else (-180.0, east)
+    if not (west < east and south < north):
+        return
+
+    box = (round(south, 1), round(west, 1), round(north, 1), round(east, 1))
+    if box == _pelyr["box"] and now - _pelyr["box_at"] < PELYR_SAME_BOX:
+        return
+
+    _pelyr.update(busy=True, next=now + PELYR_MIN_INTERVAL, box=box, box_at=now)
+    threading.Thread(target=run_pelyr, args=((south, west, north, east),), daemon=True).start()
+
+
+# ----------------------------------------------
+# Backup when both of the above are down: VesselAPI (vesselapi.com)
+#
+# Its free plan is tiny: 150 requests a MONTH, 50 ships per request, and an
+# area of at most 4 degrees (height + width). So it is never used while
+# aisstream or Pelyr is delivering. Only when neither has for a few minutes
+# does the relay ask VesselAPI for the middle of the area on screen, at most
+# once every five minutes, and it stops for the month at 140 requests. The
+# count is kept in .vesselapi_usage.json so restarts do not reset it.
+#
+# Get a free key at https://dashboard.vesselapi.com and put it in .env:
+#     VESSELAPI_KEY=...
+# ----------------------------------------------
+
+VESSELAPI_URL = os.environ.get("VESSELAPI_URL", "https://api.vesselapi.com/v1")
+VESSELAPI_KEY = os.environ.get("VESSELAPI_KEY", "").strip()
+
+VESSELAPI_MONTHLY_LIMIT = int(os.environ.get("VESSELAPI_MONTHLY_LIMIT") or 140)
+VESSELAPI_MIN_INTERVAL = 300    # seconds between requests
+VESSELAPI_MAX_SPAN = 3.9        # degrees of height + width it accepts (4), with a margin
+VESSELAPI_AFTER = 180           # the others must have been silent this long
+VESSELAPI_USAGE_FILE = os.path.join(ROOT, ".vesselapi_usage.json")
+
+_vesselapi = {"busy": False, "next": 0.0, "blocked_until": 0.0, "error": "",
+              "ok_at": 0.0, "month": "", "used": 0, "loaded": False}
+_server_started = time.time()
+
+
+def vesselapi_budget_left():
+    """Requests left this month (reads / rolls over the counter on disk)."""
+    month = time.strftime("%Y-%m", time.gmtime())
+    if not _vesselapi["loaded"]:
+        _vesselapi["loaded"] = True
+        try:
+            with open(VESSELAPI_USAGE_FILE, encoding="utf-8") as handle:
+                saved = json.load(handle)
+            _vesselapi.update(month=str(saved.get("month")), used=int(saved.get("used") or 0))
+        except (OSError, ValueError, AttributeError):
+            pass                                     # no file yet: nothing used
+    if _vesselapi["month"] != month:
+        _vesselapi.update(month=month, used=0)
+    return VESSELAPI_MONTHLY_LIMIT - _vesselapi["used"]
+
+
+def run_vesselapi(box):
+    """Background thread: one request for one small area."""
+    south, west, north, east = box
+    try:
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - SHIP_MAX_AGE))
+        query = urllib.parse.urlencode({
+            "filter.latBottom": f"{south:.4f}", "filter.latTop": f"{north:.4f}",
+            "filter.lonLeft": f"{west:.4f}", "filter.lonRight": f"{east:.4f}",
+            "time.from": stamp, "pagination.limit": 50})
+        request = urllib.request.Request(
+            f"{VESSELAPI_URL}/location/vessels/bounding-box?{query}",
+            headers={"Accept": "application/json", "User-Agent": "osint-map-local/1.0",
+                     "Authorization": f"Bearer {VESSELAPI_KEY}"})
+        with urllib.request.urlopen(request, timeout=20) as response:
+            data = json.loads(response.read().decode("utf-8"))
+
+        vessels = data.get("vessels") if isinstance(data, dict) else None
+        now = time.time()
+        added = 0
+        with _ships_lock:
+            for vessel in vessels if isinstance(vessels, list) else []:
+                if not isinstance(vessel, dict) or vessel.get("suspected_glitch"):
+                    continue
+                mmsi = vessel.get("mmsi")
+                lat = _clean_number(vessel.get("latitude"))
+                lon = _clean_number(vessel.get("longitude"))
+                when = _pelyr_time(vessel.get("timestamp"))
+                if (not isinstance(mmsi, int) or isinstance(mmsi, bool) or lat is None
+                        or lon is None or when is None or abs(lat) > 90 or abs(lon) > 180):
+                    continue
+                when = min(when, now)
+                ship = _ships.get(mmsi)
+                if ship is None:
+                    ship = _ships[mmsi] = dict(SHIP_BLANK)
+                ship["seen"] = max(ship["seen"], when)
+                if when * 1000 > ship["t"]:
+                    ship.update(lat=round(lat, 5), lon=round(lon, 5), t=int(when * 1000),
+                                sog=_clean_number(vessel.get("sog")),
+                                cog=_clean_number(vessel.get("cog")),
+                                heading=_clean_number(vessel.get("heading")),
+                                nav=_clean_number(vessel.get("nav_status")),
+                                credit="Position from VesselAPI (vesselapi.com)")
+                    note_ship_trail(mmsi, ship)
+                    added += 1
+                if _clean_text(vessel.get("vessel_name")):
+                    ship["name"] = _clean_text(vessel.get("vessel_name"))
+                if _clean_number(vessel.get("imo")):
+                    ship["imo"] = _clean_number(vessel.get("imo"))
+        _vesselapi.update(error="", ok_at=now)
+        print(f"VesselAPI (backup): {added} ships, "
+              f"{VESSELAPI_MONTHLY_LIMIT - _vesselapi['used']} requests left this month")
+    except urllib.error.HTTPError as error:
+        if error.code in (401, 403):
+            _vesselapi.update(error="VesselAPI refused the API key (or its quota is used up)",
+                              blocked_until=time.time() + 3600)
+            print(f"VesselAPI refused the request (HTTP {error.code}): "
+                  "check VESSELAPI_KEY in .env, or the month's quota is used up")
+        elif error.code == 429:
+            _vesselapi["blocked_until"] = time.time() + 3600
+            print("VesselAPI asked us to slow down: pausing it for an hour")
+        else:
+            _vesselapi["error"] = f"VesselAPI HTTP {error.code}"
+            print(f"VesselAPI failed (HTTP {error.code})")
+    except Exception as error:  # noqa: BLE001
+        _vesselapi["error"] = str(error)
+        print(f"VesselAPI failed ({error})")
+    finally:
+        _vesselapi["busy"] = False
+
+
+def request_vesselapi(south, west, north, east):
+    """Ask the backup about the middle of this area, if it is allowed to.
+    (Call with _ships_lock held, and only when the main sources are down.)"""
+    now = time.time()
+    if (not VESSELAPI_KEY or _vesselapi["busy"] or now < _vesselapi["next"]
+            or now < _vesselapi["blocked_until"]):
+        return
+    if vesselapi_budget_left() <= 0:
+        if not _vesselapi["error"]:
+            _vesselapi["error"] = "VesselAPI: this month's free requests are used up"
+            print(_vesselapi["error"])
+        return
+
+    # The biggest box it accepts, around the middle of the view
+    if west > east:                                  # view across the date line
+        east += 360
+    half_height = min((north - south) / 2, VESSELAPI_MAX_SPAN / 4)
+    half_width = min((east - west) / 2, VESSELAPI_MAX_SPAN / 2 - half_height)
+    lat = min(max((south + north) / 2, -89 + half_height), 89 - half_height)
+    lon = (west + east) / 2
+    if lon > 180:
+        lon -= 360
+    lon = min(max(lon, -180 + half_width), 180 - half_width)
+    if half_height <= 0 or half_width <= 0:
+        return
+
+    # Count it before asking: a failed request may still have used one up
+    _vesselapi.update(busy=True, next=now + VESSELAPI_MIN_INTERVAL,
+                      used=_vesselapi["used"] + 1)
+    try:
+        with open(VESSELAPI_USAGE_FILE, "w", encoding="utf-8") as handle:
+            json.dump({"month": _vesselapi["month"], "used": _vesselapi["used"]}, handle)
+    except OSError as error:
+        print(f"VesselAPI usage could not be saved ({error})")
+    threading.Thread(
+        target=run_vesselapi, daemon=True,
+        args=((lat - half_height, lon - half_width, lat + half_height, lon + half_width),)).start()
+
+
+def get_ships(south, west, north, east):
+    """The ships inside the box, as compact rows (see ShipRelayRow in ships.ts)."""
+    if not AISSTREAM_API_KEY and not PELYR_API_KEY and not VESSELAPI_KEY:
+        return {"available": False, "reason": "nokey"}
+
+    now = time.time()
+    with _ships_lock:
+        stream_ok = AISSTREAM_API_KEY and now >= _ship_stream["blocked_until"]
+        pelyr_ok = PELYR_API_KEY and now >= _pelyr["blocked_until"]
+        backup_ok = VESSELAPI_KEY and now >= _vesselapi["blocked_until"]
+        if not stream_ok and not pelyr_ok and not backup_ok:
+            return {"available": False, "reason": "key",
+                    "error": _ship_stream["error"] or _pelyr["error"] or _vesselapi["error"]}
+        request_pelyr(south, west, north, east)
+
+        # The backup: only once neither main source has delivered for a while
+        # (or since the server started, if they never have)
+        # (Pelyr is only asked while a page is looking, so an old answer
+        # means nothing unless its last request failed)
+        delivered = max(_ship_stream["heard_at"], _server_started,
+                        now if pelyr_ok and not _pelyr["error"] else _pelyr["ok_at"])
+        backup_on = bool(backup_ok and now - delivered > VESSELAPI_AFTER)
+        if backup_ok and not AISSTREAM_API_KEY and not PELYR_API_KEY:
+            backup_on = True                         # it is the only source there is
+        if backup_on:
+            request_vesselapi(south, west, north, east)
+
+    start_ship_stream()      # (normally running since the server started)
+
+    with _ships_lock:
+
+        def inside(ship):
+            if ship["lat"] is None or now - ship["t"] / 1000 > SHIP_MAX_AGE:
+                return False
+            if not south <= ship["lat"] <= north:
+                return False
+            if west <= east:
+                return west <= ship["lon"] <= east
+            return ship["lon"] >= west or ship["lon"] <= east    # box across the date line
+
+        found = [(mmsi, ship) for mmsi, ship in _ships.items() if inside(ship)]
+        total = len(found)
+        if total > SHIP_REPLY_LIMIT:
+            # Too many for the page (a view of half the world): ships under way first
+            found.sort(key=lambda item: not 0.5 <= (item[1]["sog"] or 0) < 102)
+            found = found[:SHIP_REPLY_LIMIT]
+
+        rows = [[mmsi, s["lat"], s["lon"], s["t"], s["sog"], s["cog"], s["heading"],
+                 s["nav"], s["name"], s["type"], s["callSign"], s["imo"],
+                 s["destination"], s["draught"], s["length"], s["beam"], s["credit"],
+                 s["eta"]]
+                for mmsi, s in found]
+        since = _ship_stream["listening_since"]
+        return {"available": True, "ships": rows,
+                "sources": [name for name, on in (("aisstream.io", stream_ok),
+                                                  ("Pelyr", pelyr_ok),
+                                                  ("VesselAPI backup", backup_on)) if on],
+                "inArea": total, "tracked": len(_ships),
+                # (with Pelyr the area on screen is whole at once: no warming up)
+                "listeningFor": 99999 if pelyr_ok else int(now - since) if since else 0,
+                "error": _ship_stream["error"] or _pelyr["error"] or _vesselapi["error"]}
+
+
+# ----------------------------------------------
+# Real vehicle positions (GPS): operators' GTFS-Realtime feeds
+#
+# Transitous (above) places vehicles from the timetable. Many operators also
+# publish where each vehicle really is, as a "GTFS-Realtime vehicle
+# positions" feed, refreshed every 10-30 seconds. There is no worldwide
+# source of those, so the relay keeps a list of feeds, each with the area it
+# covers, and asks the ones under the area on screen (only while a page has
+# the transit layer on there).
+#
+# Where the list comes from:
+#   - TransLink (Metro Vancouver): built in. Free key from
+#     https://developer.translink.ca , in .env:  TRANSLINK_API_KEY=...
+#   - MBTA (Boston): built in, no key.
+#   - Everywhere else: looked up, per area you visit, in two catalogues of
+#     the world's transit feeds, and remembered for a week:
+#       Transitland (transit.land), free key:   TRANSITLAND_API_KEY=...
+#       Mobility Database (mobilitydatabase.org), free account; copy the
+#       "refresh token" from your account page:
+#                                   MOBILITY_DATABASE_REFRESH_TOKEN=...
+#     Feeds that need their own key cannot be read directly; Transitland
+#     passes on its own copy of many of those (about a minute old).
+#
+# A position feed only says "vehicle 4012 is on route 6641": the route's
+# real name, colour and kind come from the operator's timetable download
+# (GTFS zip), fetched once per feed and kept for a week.
+# ----------------------------------------------
+
+TRANSLINK_API_KEY = os.environ.get("TRANSLINK_API_KEY", "").strip()
+TRANSITLAND_API_KEY = os.environ.get("TRANSITLAND_API_KEY", "").strip()
+MOBILITY_DATABASE_REFRESH_TOKEN = os.environ.get("MOBILITY_DATABASE_REFRESH_TOKEN", "").strip()
+
+TRANSITLAND_URL = os.environ.get("TRANSITLAND_URL", "https://transit.land/api/v2/rest")
+MOBILITY_DATABASE_URL = os.environ.get("MOBILITY_DATABASE_URL", "https://api.mobilitydatabase.org")
+
+GPS_FEED_INTERVAL = 15          # seconds between requests to one feed
+GPS_RELAYED_INTERVAL = 60       # ... for feeds read through Transitland's copy
+GPS_MAX_AGE = 300               # a position older than this is not shown
+GPS_FEEDS_PER_VIEW = 15         # most feeds asked for one view
+GPS_REPLY_LIMIT = 5000          # most vehicles sent to the page at once
+GPS_FEED_MAX_BYTES = 25 * 1024 * 1024
+GPS_STATIC_MAX_BYTES = 250 * 1024 * 1024
+GPS_ROUTES_TTL = 7 * 86400
+GPS_DISCOVER_TTL = 7 * 86400
+GPS_DISCOVER_MAX_SPAN = 6.0     # no catalogue lookups for views wider than this (degrees)
+GPS_FEEDS_FILE = os.path.join(ROOT, ".transit_feeds_cache.json")    # dotfiles: never served
+
+_gps_lock = threading.Lock()
+_gps_feeds = {}             # key -> feed (see add_gps_feed)
+_gps_state = {}             # key -> {"at", "busy", "vehicles", "error", "failures", "routes", ...}
+_gps_cells = {}             # "lat,lon" of a 1-degree square -> when its feeds were looked up
+_gps_discovering = set()
+_mobility_token = {"value": "", "expires": 0.0}
+
+
+def _public_url(url):
+    """Catalogue entries are other people's data: only fetch real web addresses."""
+    try:
+        parts = urllib.parse.urlparse(url)
+    except ValueError:
+        return False
+    host = (parts.hostname or "").lower()
+    if parts.scheme not in ("http", "https") or "." not in host:
+        return False
+    return not (host == "localhost" or host.endswith(".local") or host.endswith(".internal")
+                or re.match(r"^(127\.|10\.|192\.168\.|169\.254\.|0\.|172\.(1[6-9]|2\d|3[01])\.)", host))
+
+
+def _url_identity(url):
+    """Two catalogue entries for the same feed: same host and path."""
+    parts = urllib.parse.urlparse(url)
+    return f"{(parts.hostname or '').lower()}{parts.path.rstrip('/').lower()}"
+
+
+def add_gps_feed(key, name, url, box, static_url="", kind="direct", credit="", interval=None):
+    """box = (south, west, north, east). kind "transitland" = read Transitland's
+    copy of the feed, url then being its feed id. Call with _gps_lock held."""
+    identity = _url_identity(url) if kind == "direct" else f"transitland:{url}"
+    for other_key, other in _gps_feeds.items():
+        if other_key != key and other["identity"] == identity:
+            return False                             # already listed from elsewhere
+    _gps_feeds[key] = {
+        "key": key, "name": name, "url": url, "box": tuple(box), "static_url": static_url,
+        "kind": kind, "credit": credit, "identity": identity,
+        "interval": interval or (GPS_RELAYED_INTERVAL if kind == "transitland" else GPS_FEED_INTERVAL)}
+    return True
+
+
+# ---------- reading a feed (protocol buffers, by hand: no packages) ----------
+
+def _pb_varint(data, i):
+    value = shift = 0
+    while True:
+        byte = data[i]
+        i += 1
+        value |= (byte & 0x7F) << shift
+        if not byte & 0x80:
+            return value, i
+        shift += 7
+        if shift > 70:
+            raise ValueError("bad number in feed")
+
+
+def _pb_fields(data):
+    """(field number, value) for each field of one message. Nested messages
+    and text come as bytes, numbers as int, 4/8-byte values as bytes."""
+    i, end = 0, len(data)
+    while i < end:
+        key, i = _pb_varint(data, i)
+        wire = key & 7
+        if wire == 0:
+            value, i = _pb_varint(data, i)
+        elif wire == 1:
+            value, i = data[i:i + 8], i + 8
+        elif wire == 2:
+            size, i = _pb_varint(data, i)
+            value, i = data[i:i + size], i + size
+        elif wire == 5:
+            value, i = data[i:i + 4], i + 4
+        else:
+            raise ValueError("not a GTFS-Realtime feed")
+        if i > end:
+            raise ValueError("feed cut short")
+        yield key >> 3, value
+
+
+def _pb_text(value):
+    return value.decode("utf-8", "replace").strip() if isinstance(value, bytes) else ""
+
+
+def _pb_float(value):
+    if isinstance(value, bytes) and len(value) == 4:
+        number = struct.unpack("<f", value)[0]
+        return number if number == number and abs(number) < 1e9 else None    # (NaN != NaN)
+    return None
+
+
+def parse_vehicle_positions(data):
+    """GTFS-Realtime FeedMessage -> list of vehicles (dicts). Field numbers
+    are those of gtfs-realtime.proto."""
+    vehicles = []
+    for field, entity in _pb_fields(data):
+        if field != 2 or not isinstance(entity, bytes):          # FeedMessage.entity
+            continue
+        entity_id, found = "", None
+        for field, value in _pb_fields(entity):
+            if field == 1:
+                entity_id = _pb_text(value)
+            elif field == 4 and isinstance(value, bytes):        # FeedEntity.vehicle
+                found = value
+        if found is None:
+            continue
+        v = {"id": entity_id, "label": "", "route_id": "", "trip_id": "", "lat": None,
+             "lon": None, "bearing": None, "speed": None, "t": 0, "status": None}
+        for field, value in _pb_fields(found):                   # VehiclePosition
+            if field == 1 and isinstance(value, bytes):          # .trip
+                for f, x in _pb_fields(value):
+                    if f == 1:
+                        v["trip_id"] = _pb_text(x)
+                    elif f == 5:
+                        v["route_id"] = _pb_text(x)
+            elif field == 2 and isinstance(value, bytes):        # .position
+                for f, x in _pb_fields(value):
+                    if f == 1:
+                        v["lat"] = _pb_float(x)
+                    elif f == 2:
+                        v["lon"] = _pb_float(x)
+                    elif f == 3:
+                        v["bearing"] = _pb_float(x)
+                    elif f == 5:
+                        v["speed"] = _pb_float(x)                # metres per second
+            elif field == 4 and isinstance(value, int):          # .current_status
+                v["status"] = value
+            elif field == 5 and isinstance(value, int):          # .timestamp
+                v["t"] = value
+            elif field == 8 and isinstance(value, bytes):        # .vehicle
+                for f, x in _pb_fields(value):
+                    if f == 1 and _pb_text(x):
+                        v["id"] = _pb_text(x)
+                    elif f == 2:
+                        v["label"] = _pb_text(x)
+        if v["lat"] is None or v["lon"] is None or abs(v["lat"]) > 90 or abs(v["lon"]) > 180:
+            continue
+        if abs(v["lat"]) < 0.01 and abs(v["lon"]) < 0.01:        # "no GPS fix" comes as 0, 0
+            continue
+        vehicles.append(v)
+    return vehicles
+
+
+# GTFS route_type -> the page's kinds of vehicle (TRANSIT_MODES in transit.ts)
+def _gps_mode(route_type):
+    try:
+        kind = int(route_type)
+    except (TypeError, ValueError):
+        return "BUS"
+    simple = {0: "TRAM", 1: "SUBWAY", 2: "REGIONAL_RAIL", 3: "BUS", 4: "FERRY", 5: "TRAM",
+              6: "AERIAL_LIFT", 7: "FUNICULAR", 11: "BUS", 12: "SUBWAY"}
+    if kind in simple:
+        return simple[kind]
+    for low, high, mode in ((100, 199, "REGIONAL_RAIL"), (200, 299, "COACH"), (400, 699, "SUBWAY"),
+                            (700, 899, "BUS"), (900, 999, "TRAM"), (1000, 1299, "FERRY"),
+                            (1300, 1399, "AERIAL_LIFT"), (1400, 1499, "FUNICULAR")):
+        if low <= kind <= high:
+            return mode
+    return "BUS"
+
+
+# ---------- route names (from the operator's timetable download) ----------
+
+def _gps_routes_file(key):
+    return os.path.join(ROOT, ".transit_routes_" + re.sub(r"[^A-Za-z0-9]+", "_", key) + ".json")
+
+
+def load_gps_routes(feed):
+    """Background thread: route id -> [short name, long name, mode, colour]."""
+    key = feed["key"]
+    routes = {}
+    try:
+        path = _gps_routes_file(key)
+        try:
+            if time.time() - os.path.getmtime(path) < GPS_ROUTES_TTL:
+                with open(path, encoding="utf-8") as handle:
+                    routes = json.load(handle)
+        except (OSError, ValueError):
+            routes = {}
+
+        if not routes and feed["static_url"] and _public_url(feed["static_url"]):
+            request = urllib.request.Request(
+                feed["static_url"], headers={"User-Agent": PHOTO_USER_AGENT})
+            with tempfile.TemporaryFile() as temp:
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    size = 0
+                    while True:
+                        chunk = response.read(1 << 20)
+                        if not chunk:
+                            break
+                        size += len(chunk)
+                        if size > GPS_STATIC_MAX_BYTES:
+                            raise RuntimeError("timetable download too large")
+                        temp.write(chunk)
+                with zipfile.ZipFile(temp) as archive:
+                    name = next((n for n in archive.namelist()
+                                 if n.lower().split("/")[-1] == "routes.txt"), None)
+                    if not name:
+                        raise RuntimeError("no routes.txt in the timetable download")
+                    with archive.open(name) as raw:
+                        text = io.TextIOWrapper(raw, encoding="utf-8-sig", newline="")
+                        for row in csv.DictReader(text):
+                            row = {(k or "").strip(): (v or "").strip() for k, v in row.items()}
+                            if not row.get("route_id"):
+                                continue
+                            colour = row.get("route_color", "").lower()
+                            routes[row["route_id"]] = [
+                                row.get("route_short_name", ""), row.get("route_long_name", ""),
+                                _gps_mode(row.get("route_type")),
+                                colour if re.fullmatch(r"[0-9a-f]{6}", colour) else ""]
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(routes, handle)
+            print(f"Transit GPS: {len(routes)} route names loaded for {feed['name']}")
+    except Exception as error:  # noqa: BLE001
+        print(f"Transit GPS: no route names for {feed['name']} ({error})")
+    finally:
+        with _gps_lock:
+            state = _gps_state.setdefault(key, {})
+            state["routes"] = routes
+            state["routes_busy"] = False
+
+
+# ---------- asking a feed ----------
+
+def run_gps_feed(feed):
+    """Background thread: one request to one feed."""
+    key = feed["key"]
+    vehicles, problem = None, ""
+    try:
+        headers = {"User-Agent": PHOTO_USER_AGENT, "Accept-Encoding": "gzip"}
+        if feed["kind"] == "transitland":
+            url = (f"{TRANSITLAND_URL}/feeds/{urllib.parse.quote(feed['url'], safe='')}"
+                   "/download_latest_rt/vehicle_positions.pb")
+            headers["apikey"] = TRANSITLAND_API_KEY
+        elif feed["kind"] == "translink":
+            url = f"{feed['url']}?apikey={urllib.parse.quote(TRANSLINK_API_KEY)}"
+        else:
+            url = feed["url"]
+            if not _public_url(url):
+                raise RuntimeError("not a public web address")
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers),
+                                    timeout=15) as response:
+            data = response.read(GPS_FEED_MAX_BYTES + 1)
+            if len(data) > GPS_FEED_MAX_BYTES:
+                raise RuntimeError("feed too large")
+            if response.headers.get("Content-Encoding", "").lower() == "gzip" or data[:2] == b"\x1f\x8b":
+                data = gzip.decompress(data)
+        vehicles = parse_vehicle_positions(data)
+    except urllib.error.HTTPError as error:
+        problem = f"HTTP {error.code}"
+    except Exception as error:  # noqa: BLE001
+        problem = str(error) or type(error).__name__
+
+    now = time.time()
+    with _gps_lock:
+        state = _gps_state.setdefault(key, {})
+        state["busy"] = False
+        if vehicles is None:
+            state["failures"] = state.get("failures", 0) + 1
+            state["error"] = problem
+            # A feed that keeps failing is asked less and less often (up to 10 minutes)
+            state["at"] = now + min(600, 30 * state["failures"]) - feed["interval"]
+            if state["failures"] in (1, 5):
+                print(f"Transit GPS: {feed['name']} failed ({problem})")
+            return
+        if not state.get("at"):
+            print(f"Transit GPS: {feed['name']} is answering ({len(vehicles)} vehicles)")
+        state.update(failures=0, error="", at=now, raw=vehicles, built=None)
+
+
+def _gps_rows(feed, state, now):
+    """The feed's vehicles as rows for the page (see TransitGpsRow in transit.ts)."""
+    routes = state.get("routes") or {}
+    built = state.get("built")
+    if built is not None and built[0] is routes:
+        return built[1]
+    rows = []
+    for v in state.get("raw") or []:
+        if v["t"] and now - v["t"] > GPS_MAX_AGE:
+            continue
+        route = routes.get(v["route_id"])
+        # (a raw route id is only shown when there is no timetable to translate it)
+        name = (route[0] or route[1]) if route else ("" if feed["static_url"] else v["route_id"])
+        rows.append([
+            f"{feed['key']}|{v['id'] or v['trip_id']}",
+            round(v["lat"], 5), round(v["lon"], 5),
+            round(v["bearing"], 1) if v["bearing"] is not None else None,
+            round(v["speed"], 1) if v["speed"] is not None and 0 <= v["speed"] < 150 else None,
+            v["t"] or int(state["at"]),
+            name[:40], (route[1] if route else "")[:80],
+            route[2] if route else "BUS", route[3] if route else "",
+            v["label"][:30], feed["name"][:60], feed["credit"][:200]])
+    state["built"] = (routes, rows)
+    return rows
+
+
+# ---------- finding the feeds of an area (the two catalogues) ----------
+
+def _get_json(url, headers=None, data=None, timeout=20):
+    request = urllib.request.Request(
+        url, data=data,
+        headers=dict({"Accept": "application/json", "User-Agent": PHOTO_USER_AGENT}, **(headers or {})))
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read(8 * 1024 * 1024).decode("utf-8"))
+
+
+def _box_of_points(geometry):
+    """(south, west, north, east) of a GeoJSON geometry, or None."""
+    lats, lons = [], []
+
+    def walk(part):
+        if isinstance(part, list):
+            if len(part) >= 2 and all(isinstance(n, (int, float)) for n in part[:2]):
+                lons.append(part[0])
+                lats.append(part[1])
+            else:
+                for item in part:
+                    walk(item)
+
+    walk(geometry.get("coordinates") if isinstance(geometry, dict) else None)
+    return (min(lats), min(lons), max(lats), max(lons)) if lats else None
+
+
+def discover_transitland(south, west, north, east):
+    """Feeds with vehicle positions for the operators in this box."""
+    found = []
+    key = {"apikey": TRANSITLAND_API_KEY}
+    operators = _get_json(
+        f"{TRANSITLAND_URL}/operators?" + urllib.parse.urlencode(
+            {"bbox": f"{west},{south},{east},{north}", "limit": 30}), key).get("operators") or []
+
+    def feed_info(feed_id):
+        feeds = _get_json(f"{TRANSITLAND_URL}/feeds/{urllib.parse.quote(feed_id, safe='')}",
+                          key).get("feeds") or []
+        return feeds[0] if feeds and isinstance(feeds[0], dict) else {}
+
+    for operator in operators[:15]:
+        if not isinstance(operator, dict):
+            continue
+        spec = lambda f: str(f.get("spec", "")).lower().replace("_", "-")   # noqa: E731
+        feeds = [f for f in operator.get("feeds") or [] if isinstance(f, dict) and f.get("onestop_id")]
+        realtime = [f["onestop_id"] for f in feeds if spec(f) == "gtfs-rt"]
+        static = [f["onestop_id"] for f in feeds if spec(f) == "gtfs"]
+        if not realtime:
+            continue
+
+        box = None
+        for agency in operator.get("agencies") or []:
+            part = _box_of_points(agency.get("geometry")) if isinstance(agency, dict) else None
+            if part:
+                box = part if not box else (min(box[0], part[0]), min(box[1], part[1]),
+                                            max(box[2], part[2]), max(box[3], part[3]))
+        box = box or (south, west, north, east)
+
+        static_url = ""
+        for feed_id in realtime[:2]:
+            info = feed_info(feed_id)
+            urls = info.get("urls") or {}
+            positions = urls.get("realtime_vehicle_positions")
+            if not positions:
+                continue
+            if not static_url and static:
+                static_url = (feed_info(static[0]).get("urls") or {}).get("static_current") or ""
+            needs_key = bool((info.get("authorization") or {}).get("type"))
+            licence = info.get("license") or {}
+            found.append({
+                "key": f"tl:{feed_id}",
+                "name": operator.get("name") or operator.get("short_name") or feed_id,
+                # A feed that wants its own key: read Transitland's copy instead
+                "url": feed_id if needs_key else positions,
+                "kind": "transitland" if needs_key else "direct",
+                "box": box, "static_url": static_url,
+                "credit": _clean_text(licence.get("attribution_text"))})
+    return found
+
+
+def _mobility_headers():
+    now = time.time()
+    if now >= _mobility_token["expires"]:
+        answer = _get_json(
+            f"{MOBILITY_DATABASE_URL}/v1/tokens",
+            {"Content-Type": "application/json"},
+            json.dumps({"refresh_token": MOBILITY_DATABASE_REFRESH_TOKEN}).encode("utf-8"))
+        _mobility_token.update(value=answer["access_token"], expires=now + 3000)   # (valid an hour)
+    return {"Authorization": f"Bearer {_mobility_token['value']}"}
+
+
+def discover_mobility_database(south, west, north, east):
+    """Position feeds that need no key, for the timetables touching this box."""
+    headers = _mobility_headers()
+    timetables = _get_json(
+        f"{MOBILITY_DATABASE_URL}/v1/gtfs_feeds?" + urllib.parse.urlencode({
+            "dataset_latitudes": f"{south},{north}", "dataset_longitudes": f"{west},{east}",
+            "bounding_filter_method": "partially_enclosed", "limit": 100}), headers)
+
+    known, countries = {}, []
+    for item in timetables if isinstance(timetables, list) else []:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        latest = item.get("latest_dataset") or {}
+        bounds = latest.get("bounding_box") or {}
+        try:
+            box = (float(bounds["minimum_latitude"]), float(bounds["minimum_longitude"]),
+                   float(bounds["maximum_latitude"]), float(bounds["maximum_longitude"]))
+        except (KeyError, TypeError, ValueError):
+            box = (south, west, north, east)
+        known[item["id"]] = (box, latest.get("hosted_url")
+                             or (item.get("source_info") or {}).get("producer_url") or "")
+        for place in item.get("locations") or []:
+            code = place.get("country_code") if isinstance(place, dict) else None
+            if code and code not in countries:
+                countries.append(code)
+
+    found = []
+    for country in countries[:3]:
+        for offset in (0, 500, 1000):
+            page = _get_json(
+                f"{MOBILITY_DATABASE_URL}/v1/gtfs_rt_feeds?" + urllib.parse.urlencode({
+                    "entity_types": "vp", "country_code": country, "limit": 500, "offset": offset}),
+                headers)
+            page = page if isinstance(page, list) else []
+            for item in page:
+                if not isinstance(item, dict) or item.get("status") in ("deprecated", "inactive"):
+                    continue
+                source = item.get("source_info") or {}
+                matches = [ref for ref in item.get("feed_references") or [] if ref in known]
+                if not matches or not source.get("producer_url"):
+                    continue
+                if source.get("authentication_type") not in (None, 0):
+                    continue                         # wants a key of its own
+                box, static_url = known[matches[0]]
+                found.append({
+                    "key": f"mdb:{item.get('id')}", "name": item.get("provider") or str(item.get("id")),
+                    "url": source["producer_url"], "kind": "direct", "box": box,
+                    "static_url": static_url, "credit": ""})
+            if len(page) < 500:
+                break
+    return found
+
+
+def save_gps_feeds():
+    """(Call with _gps_lock held.) Only looked-up feeds: the built-in ones are code."""
+    try:
+        with open(GPS_FEEDS_FILE, "w", encoding="utf-8") as handle:
+            json.dump({"cells": _gps_cells,
+                       "feeds": [{k: f[k] for k in ("key", "name", "url", "box", "static_url",
+                                                    "kind", "credit")}
+                                 for f in _gps_feeds.values() if ":" in f["key"]]}, handle)
+    except OSError as error:
+        print(f"Transit GPS: the feed list could not be saved ({error})")
+
+
+def load_gps_feeds():
+    with _gps_lock:
+        if TRANSLINK_API_KEY:
+            add_gps_feed("translink", "TransLink", "https://gtfsapi.translink.ca/v3/gtfsposition",
+                         (48.95, -123.5, 49.5, -122.15), kind="translink",
+                         static_url="https://gtfs-static.translink.ca/gtfs/google_transit.zip",
+                         credit="Route and arrival data used in this product or service is "
+                                "provided by permission of TransLink. TransLink assumes no "
+                                "responsibility for the accuracy or currency of the Data used "
+                                "in this product or service.")
+        add_gps_feed("mbta", "MBTA", "https://cdn.mbta.com/realtime/VehiclePositions.pb",
+                     (41.2, -72.0, 43.0, -69.9),
+                     static_url="https://cdn.mbta.com/MBTA_GTFS.zip")
+        try:
+            with open(GPS_FEEDS_FILE, encoding="utf-8") as handle:
+                saved = json.load(handle)
+            now = time.time()
+            _gps_cells.update({cell: at for cell, at in saved.get("cells", {}).items()
+                               if now - at < GPS_DISCOVER_TTL})
+            for feed in saved.get("feeds", []):
+                # (a relayed feed is no use once the Transitland key is gone)
+                if feed.get("kind") == "transitland" and not TRANSITLAND_API_KEY:
+                    continue
+                add_gps_feed(feed["key"], feed["name"], feed["url"], feed["box"],
+                             feed.get("static_url", ""), feed.get("kind", "direct"),
+                             feed.get("credit", ""))
+        except FileNotFoundError:
+            pass
+        except Exception as error:  # noqa: BLE001
+            print(f"Transit GPS: the saved feed list could not be read ({error})")
+
+
+def run_gps_discovery(cell, south, west, north, east):
+    """Background thread: ask the catalogues which feeds cover this square."""
+    found = []
+    for label, wanted, lookup in (
+            ("Transitland", TRANSITLAND_API_KEY, discover_transitland),
+            ("Mobility Database", MOBILITY_DATABASE_REFRESH_TOKEN, discover_mobility_database)):
+        if not wanted:
+            continue
+        try:
+            part = lookup(south, west, north, east)
+            found += part
+            print(f"Transit GPS: {label} lists {len(part)} position feed(s) around "
+                  f"{(south + north) / 2:.1f}, {(west + east) / 2:.1f}")
+        except urllib.error.HTTPError as error:
+            print(f"Transit GPS: {label} lookup failed (HTTP {error.code}"
+                  f"{': check the key in .env' if error.code in (401, 403) else ''})")
+        except Exception as error:  # noqa: BLE001
+            print(f"Transit GPS: {label} lookup failed ({error})")
+    with _gps_lock:
+        for feed in found:
+            try:
+                add_gps_feed(feed["key"], str(feed["name"]), str(feed["url"]),
+                             [float(n) for n in feed["box"]], str(feed.get("static_url") or ""),
+                             feed["kind"], feed.get("credit") or "")
+            except (KeyError, TypeError, ValueError):
+                continue
+        _gps_cells[cell] = time.time()
+        _gps_discovering.discard(cell)
+        save_gps_feeds()
+
+
+def get_gps_vehicles(south, west, north, east):
+    """Real vehicle positions inside the box, from every feed that covers it."""
+    now = time.time()
+    lookups = bool(TRANSITLAND_API_KEY or MOBILITY_DATABASE_REFRESH_TOKEN)
+    start = []
+    with _gps_lock:
+        # 1. Which feeds are there for this area? (asked once per 1-degree square)
+        if lookups and north - south <= GPS_DISCOVER_MAX_SPAN and 0 < east - west <= GPS_DISCOVER_MAX_SPAN:
+            lat, lon = int((south + north) // 2), int((west + east) // 2)
+            cell = f"{lat},{lon}"
+            if (cell not in _gps_discovering and len(_gps_discovering) < 2
+                    and now - _gps_cells.get(cell, 0) > GPS_DISCOVER_TTL):
+                _gps_discovering.add(cell)
+                start.append(threading.Thread(
+                    target=run_gps_discovery, daemon=True,
+                    args=(cell, lat - 0.5, lon - 0.5, lat + 1.5, lon + 1.5)))
+
+        # 2. Ask the ones under the view that are due
+        def touches(box):
+            return box[0] <= north and box[2] >= south and box[1] <= east and box[3] >= west
+
+        def size(feed):                              # local feeds before national ones
+            return (feed["box"][2] - feed["box"][0]) * (feed["box"][3] - feed["box"][1])
+
+        if west > east:                              # view across the date line: not handled
+            covering = []
+        else:
+            covering = sorted((f for f in _gps_feeds.values() if touches(f["box"])),
+                              key=size)[:GPS_FEEDS_PER_VIEW]
+
+        rows, summary = [], []
+        for feed in covering:
+            state = _gps_state.setdefault(feed["key"], {})
+            if "routes" not in state and not state.get("routes_busy"):
+                state["routes_busy"] = True
+                start.append(threading.Thread(target=load_gps_routes, args=(feed,), daemon=True))
+            if not state.get("busy") and now - state.get("at", 0) >= feed["interval"]:
+                state["busy"] = True
+                start.append(threading.Thread(target=run_gps_feed, args=(feed,), daemon=True))
+            # (a feed nobody has asked for a while holds old positions: not shown)
+            fresh = now - state.get("at", 0) < GPS_MAX_AGE and not state.get("failures")
+            inside = [row for row in (_gps_rows(feed, state, now) if fresh else [])
+                      if south <= row[1] <= north and west <= row[2] <= east]
+            rows += inside
+            # (its whole area and all its lines, not just what is on screen: the
+            # page leaves the timetable's guesses for those lines out)
+            summary.append({"name": feed["name"], "vehicles": len(inside),
+                            "error": state.get("error", ""), "box": list(feed["box"]),
+                            "lines": sorted({row[6] for row in
+                                             (_gps_rows(feed, state, now) if fresh else [])
+                                             if row[6]})[:800]})
+
+        discovering = bool(_gps_discovering)
+
+    for thread in start:
+        thread.start()
+
+    return {"available": bool(covering or lookups or discovering),
+            "vehicles": rows[:GPS_REPLY_LIMIT], "feeds": summary, "discovering": discovering}
+
+
+def get_ship_trail(mmsi):
+    """Where the relay has seen this ship go since it started listening."""
+    with _ships_lock:
+        return {"mmsi": mmsi, "points": list(_ship_trails.get(mmsi) or [])}
+
+
 class Handler(SimpleHTTPRequestHandler):
 
     def end_headers(self):
@@ -1113,6 +2513,44 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as error:  # noqa: BLE001
                 return self.send_json(502, {"error": str(error)})
 
+        if url.path == "/api/ships/trail":
+            mmsi = (urllib.parse.parse_qs(url.query).get("mmsi") or [""])[0]
+            if not re.fullmatch(r"\d{9}", mmsi):
+                return self.send_json(400, {"error": "Bad parameters"})
+            return self.send_json(200, get_ship_trail(int(mmsi)))
+
+        if url.path == "/api/ships":
+            query = urllib.parse.parse_qs(url.query)
+            try:
+                south, west, north, east = (
+                    float((query.get(name) or [""])[0])
+                    for name in ("south", "west", "north", "east"))
+                assert -90 <= south <= north <= 90
+                assert -180 <= west <= 180 and -180 <= east <= 180
+            except Exception:  # noqa: BLE001
+                return self.send_json(400, {"error": "Bad parameters"})
+            try:
+                return self.send_json(200, get_ships(south, west, north, east))
+            except Exception as error:  # noqa: BLE001
+                print(f"Ship relay failed ({error})")
+                return self.send_json(502, {"error": str(error)})
+
+        if url.path == "/api/transit/vehicles":
+            query = urllib.parse.parse_qs(url.query)
+            try:
+                south, west, north, east = (
+                    float((query.get(name) or [""])[0])
+                    for name in ("south", "west", "north", "east"))
+                assert -90 <= south <= north <= 90
+                assert -180 <= west <= 180 and -180 <= east <= 180
+            except Exception:  # noqa: BLE001
+                return self.send_json(400, {"error": "Bad parameters"})
+            try:
+                return self.send_json(200, get_gps_vehicles(south, west, north, east))
+            except Exception as error:  # noqa: BLE001
+                print(f"Transit GPS relay failed ({error})")
+                return self.send_json(502, {"error": str(error)})
+
         if url.path == "/api/transit":
             query = urllib.parse.parse_qs(url.query)
 
@@ -1198,4 +2636,30 @@ if __name__ == "__main__":
     print("Routes: AirLabs key found (used for the aircraft you click), then adsbdb"
           if AIRLABS_API_KEY else
           "Routes: adsbdb only. Add AIRLABS_API_KEY to .env for better routes.")
-    server.serve_forever()
+    print("Ships: aisstream key found (worldwide, listening from now on)"
+          if AISSTREAM_API_KEY else
+          "Ships: no aisstream key (AISSTREAM_API_KEY in .env gives a live worldwide feed).")
+    print("Ships: Pelyr key found (fills in the area on screen)"
+          if PELYR_API_KEY else
+          "Ships: no Pelyr key. Add PELYR_API_KEY to .env to fill in the area on screen faster.")
+    print("Ships: VesselAPI key found (backup, used only if the others stop delivering)"
+          if VESSELAPI_KEY else
+          "Ships: no VesselAPI key (optional backup: VESSELAPI_KEY in .env).")
+    load_gps_feeds()
+    print("Transit GPS: "
+          + ("TransLink key found" if TRANSLINK_API_KEY
+             else "no TransLink key (TRANSLINK_API_KEY in .env for Vancouver's buses)")
+          + "; feeds elsewhere looked up in: "
+          + (", ".join(name for name, on in (("Transitland", TRANSITLAND_API_KEY),
+                                             ("Mobility Database", MOBILITY_DATABASE_REFRESH_TOKEN))
+                       if on)
+             or "nothing (TRANSITLAND_API_KEY / MOBILITY_DATABASE_REFRESH_TOKEN in .env)"))
+    if AISSTREAM_API_KEY or PELYR_API_KEY or VESSELAPI_KEY:
+        load_ships()
+        start_ship_stream()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("Stopping")
+    finally:
+        save_ships()

@@ -5,3 +5,6 @@ config.js
 opensky-credentials.json
 __pycache__/
 node_modules/
+.ships_cache.json*
+.vesselapi_usage.json
+.transit_*

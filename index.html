@@ -113,6 +113,13 @@
             <span class="item-count" id="transitCount">OFF</span>
         </div>
 
+        <!-- Live AIS ship positions (see ships.ts) -->
+        <div class="menu-item" id="shipToggle">
+            <span>&#9973;&#xFE0E;</span>
+            Ship Tracking
+            <span class="item-count" id="shipCount">OFF</span>
+        </div>
+
 
         <div class="section-title">BASE MAP</div>
 
@@ -548,6 +555,22 @@
         <div class="flight-notice" id="flightNotice"></div>
 
 
+        <!-- SHIP HUD (count + colour legend, see ships.ts) -->
+
+        <div class="flight-hud ship-hud" id="shipHud">
+
+            <div class="flight-hud-title">
+                LIVE SHIPS
+                <span id="shipHudCount">0</span>
+            </div>
+
+            <div class="flight-hud-status" id="shipHudStatus">--</div>
+
+            <div class="flight-legend" id="shipLegend"></div>
+
+        </div>
+
+
         <!-- MAP ERROR -->
 
         <div id="mapError" class="map-error">
@@ -585,7 +608,7 @@
         </div>
 
         <div>
-            © OPENSTREETMAP | CARTO | ADS-B: <a href="https://adsb.fi" target="_blank" rel="noopener noreferrer">ADSB.FI</a> | TRANSIT: <a href="https://transitous.org/sources/" target="_blank" rel="noopener noreferrer">TRANSITOUS</a>
+            © OPENSTREETMAP | CARTO | ADS-B: <a href="https://adsb.fi" target="_blank" rel="noopener noreferrer">ADSB.FI</a> | TRANSIT: <a href="https://transitous.org/sources/" target="_blank" rel="noopener noreferrer">TRANSITOUS</a>, GPS: TRANSLINK, MBTA, <a href="https://www.transit.land" target="_blank" rel="noopener noreferrer">TRANSITLAND</a>, <a href="https://mobilitydatabase.org" target="_blank" rel="noopener noreferrer">MOBILITY DATABASE</a> | AIS: <a href="https://aisstream.io" target="_blank" rel="noopener noreferrer">AISSTREAM.IO</a>, AIS DATA FROM <a href="https://pelyr.com" target="_blank" rel="noopener noreferrer">PELYR (PELYR.COM)</a>, PELYR DATA LICENCE 2.0, <a href="https://vesselapi.com" target="_blank" rel="noopener noreferrer">VESSELAPI</a>, <a href="https://www.digitraffic.fi/en/marine-traffic/" target="_blank" rel="noopener noreferrer">FINTRAFFIC / DIGITRAFFIC.FI</a> (CC BY 4.0)
         </div>
 
     </footer>
@@ -602,6 +625,10 @@
     <!-- TRANSIT LINES + LIVE VEHICLES (after flights.js, before script.js) -->
 
     <script src="transit.js"></script>
+
+    <!-- SHIP TRACKING (after transit.js, before script.js) -->
+
+    <script src="ships.js"></script>
 
     <!-- MAIN SCRIPT -->
 

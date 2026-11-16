@@ -249,6 +249,9 @@ function initializeMap(): void {
             // Clicking a transit vehicle opens its popup instead
             if (isTransitAtPoint(e.point)) return;
 
+            // Clicking a ship opens its popup instead
+            if (isShipAtPoint(e.point)) return;
+
             inspectLocation(
                 e.lngLat.lat,
                 e.lngLat.lng
@@ -279,6 +282,11 @@ function initializeMap(): void {
         // TRANSIT LINES + LIVE VEHICLES (see transit.js)
 
         initializeTransit();
+
+
+        // SHIP TRACKING (see ships.js)
+
+        initializeShips();
 
     }
 

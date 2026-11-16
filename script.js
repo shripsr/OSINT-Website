@@ -150,6 +150,9 @@ function initializeMap() {
             // Clicking a transit vehicle opens its popup instead
             if (isTransitAtPoint(e.point))
                 return;
+            // Clicking a ship opens its popup instead
+            if (isShipAtPoint(e.point))
+                return;
             inspectLocation(e.lngLat.lat, e.lngLat.lng);
         });
         // MAP STYLE CHANGE
@@ -164,6 +167,8 @@ function initializeMap() {
         initializeFlights();
         // TRANSIT LINES + LIVE VEHICLES (see transit.js)
         initializeTransit();
+        // SHIP TRACKING (see ships.js)
+        initializeShips();
     }
     catch (error) {
         console.error(error);

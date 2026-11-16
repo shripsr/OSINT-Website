@@ -24,6 +24,10 @@
                   placed along the track from those times, so it is an
                   ESTIMATE. Icons with a white outline use real-time
                   data; icons with a grey outline are timetable only.
+                  Where an operator publishes real GPS positions and
+                  server.py can read them (TransLink, MBTA, and feeds
+                  found through Transitland / Mobility Database), those
+                  vehicles are shown where they really are instead: T8C.
    ============================================== */
 
 
@@ -1649,6 +1653,9 @@ function tickTransitVehicles(): void {
 
         if (!position) return;
 
+        // Shown at its real position instead (see T8C)
+        if (transitGpsReplaces(vehicle, position)) return;
+
         if (vehicle.id === transitSelectedId) selectedAt = position;
 
         features.push({
@@ -1665,9 +1672,27 @@ function tickTransitVehicles(): void {
         });
     });
 
+    // Vehicles with a real GPS position (see T8C)
+    let gpsAt: number[] | null = null;
+
+    transitGpsFeatures(now, at => { gpsAt = at; }).forEach(feature => features.push(feature));
+
     drawTransitVehicles(features);
 
     // The open popup rides along with its vehicle
+    const gpsSelected = transitSelectedId ? transitGpsVehicles.get(transitSelectedId) : undefined;
+
+    if (gpsSelected && gpsAt) {
+
+        const at = gpsAt as number[];
+
+        transitVehiclePopup
+            .setLngLat([at[0], at[1]])
+            .setHTML(transitGpsHtml(gpsSelected, now));
+
+        return;
+    }
+
     const selected = transitSelectedId ? transitVehicles.get(transitSelectedId) : undefined;
 
     if (selected && selectedAt) {
@@ -1692,6 +1717,9 @@ async function refreshTransitVehicles(): Promise<void> {
 
     // No updates while the tab is hidden; visibilitychange restarts them
     if (document.hidden) return;
+
+    // Real positions, where an operator publishes them (see T8C)
+    refreshTransitGps();
 
     const zoom = map.getZoom();
 
@@ -1758,7 +1786,8 @@ async function refreshTransitVehicles(): Promise<void> {
         setTransitLiveStatus(
             next.size.toLocaleString("en-US"),
             `${next.size} vehicles in view, ${live} with real-time data. ` +
-            "Positions are estimated from stop times."
+            "Positions are estimated from stop times." +
+            (transitGpsNote ? " " + transitGpsNote : "")
         );
 
         tickTransitVehicles();
@@ -1816,7 +1845,14 @@ function setTransitLiveEnabled(on: boolean): void {
     transitLiveFailures = 0;
 
     clearTimeout(transitPollTimer);
+    clearTimeout(transitGpsTimer);
     clearInterval(transitTickTimer);
+
+    transitGpsGeneration++;
+    transitGpsBusy = false;
+    transitGpsOk = null;        // look for the relay again each time
+
+    clearTransitGps();
 
     if (on) {
 
@@ -1837,6 +1873,355 @@ function setTransitLiveEnabled(on: boolean): void {
         drawTransitVehicles([]);
 
         setTransitLiveStatus("OFF");
+    }
+}
+
+
+// ==============================================
+// T8C. REAL POSITIONS (GPS)
+//
+// Where an operator publishes where its vehicles really are (a "GTFS-
+// Realtime vehicle positions" feed), server.py reads it and hands over the
+// vehicles in the area on screen ("/api/transit/vehicles"). Those are drawn
+// in the same layer as the estimated ones, and the estimated vehicles of
+// the same lines are left out, so each bus shows once, where it really is.
+//
+// Which operators: TransLink (Vancouver) and the MBTA (Boston) are built
+// into server.py; others are looked up per area in the Transitland and
+// Mobility Database catalogues when their keys are in .env. Everywhere
+// else nothing changes: the timetable estimate is all there is.
+// ==============================================
+
+const TRANSIT_GPS_PATH = "/api/transit/vehicles";
+const TRANSIT_GPS_POLL_MS = 15000;
+const TRANSIT_GPS_PREFIX = "gps:";          // ids of real vehicles, to tell them from estimated ones
+const TRANSIT_GPS_GLIDE_MS = 45000;         // move a vehicle along its heading at most this long past a fix
+const TRANSIT_GPS_STALE_MS = 5 * 60000;
+
+/**
+ * One vehicle from server.py (get_gps_vehicles): [id, lat, lon, heading,
+ * speed in m/s, time in s, line name, line's long name, kind, colour,
+ * vehicle number, operator, credit line]
+ */
+type TransitGpsRow = unknown[];
+
+interface TransitGpsVehicle {
+    id: string;                 // with TRANSIT_GPS_PREFIX
+    lat: number;
+    lon: number;
+    bearing: number | null;     // degrees
+    speed: number | null;       // metres per second
+    t: number;                  // when the position was true (ms)
+    name: string;               // the line: "99", "Orange Line"
+    longName: string;
+    mode: string;
+    color: string;
+    label: string;              // the vehicle's own number
+    feed: string;               // the operator
+    credit: string;
+}
+
+/** One operator's feed, as server.py describes it */
+interface TransitGpsFeed {
+    name?: string;
+    box?: number[];             // south, west, north, east
+    lines?: string[];           // every line it has vehicles on right now
+}
+
+/** Where one operator's real vehicles are, and on which lines */
+interface TransitGpsCover {
+    south: number;
+    west: number;
+    north: number;
+    east: number;
+    names: Set<string>;
+}
+
+let transitGpsVehicles = new Map<string, TransitGpsVehicle>();
+let transitGpsCovers: TransitGpsCover[] = [];
+
+let transitGpsOk: boolean | null = null;    // null = unknown, false = no relay / nothing to ask
+let transitGpsBusy = false;
+let transitGpsGeneration = 0;
+let transitGpsTimer: number | undefined;
+let transitGpsNote = "";                    // for the switch's tooltip
+let transitGpsActive = false;               // the relay has (or is looking up) feeds for this area
+
+// "099" and "99 " are the same line
+function transitGpsLineKey(name: string): string {
+    return name.toUpperCase().replace(/\s+/g, "").replace(/^0+(?=.)/, "");
+}
+
+// Is this estimated vehicle one we have the real position of? (Its line has
+// real vehicles from an operator whose vehicles surround it.)
+function transitGpsReplaces(vehicle: TransitVehicle, position: number[]): boolean {
+
+    if (!transitGpsCovers.length || !vehicle.name) return false;
+
+    const key = transitGpsLineKey(vehicle.name);
+
+    return transitGpsCovers.some(cover =>
+        position[1] >= cover.south && position[1] <= cover.north &&
+        position[0] >= cover.west && position[0] <= cover.east &&
+        cover.names.has(key)
+    );
+}
+
+// A fix is up to 15-30 s old: carry the vehicle along its heading meanwhile
+function transitGpsPosition(vehicle: TransitGpsVehicle, now: number): number[] {
+
+    const age = Math.min(Math.max(0, now - vehicle.t), TRANSIT_GPS_GLIDE_MS) / 1000;
+
+    if (vehicle.bearing === null || vehicle.speed === null || vehicle.speed < 0.5 || !age) {
+        return [vehicle.lon, vehicle.lat];
+    }
+
+    const metres = vehicle.speed * age;
+
+    const heading = vehicle.bearing * Math.PI / 180;
+
+    const cosLat = Math.max(0.05, Math.cos(vehicle.lat * Math.PI / 180));
+
+    return [
+        vehicle.lon + metres * Math.sin(heading) / (111320 * cosLat),
+        vehicle.lat + metres * Math.cos(heading) / 111320
+    ];
+}
+
+function transitGpsFeatures(now: number, onSelected: (at: number[]) => void): GeoFeature[] {
+
+    const features: GeoFeature[] = [];
+
+    transitGpsVehicles.forEach(function(vehicle) {
+
+        if (now - vehicle.t > TRANSIT_GPS_STALE_MS) return;
+
+        const position = transitGpsPosition(vehicle, now);
+
+        if (vehicle.id === transitSelectedId) onSelected(position);
+
+        const info = transitModeInfo(vehicle.mode);
+
+        features.push({
+            type: "Feature",
+            geometry: { type: "Point", coordinates: position },
+            properties: {
+                id: vehicle.id,
+                name: vehicle.name,
+                color: vehicle.color,
+                realTime: true,
+                icon: transitIconId(info.icon, vehicle.color, true),
+                rank: info.rank + 0.75          // over the estimated vehicles
+            }
+        });
+    });
+
+    return features;
+}
+
+function transitGpsHtml(vehicle: TransitGpsVehicle, now: number): string {
+
+    const info = transitModeInfo(vehicle.mode);
+
+    const seconds = Math.max(0, Math.round((now - vehicle.t) / 1000));
+
+    const lines = [
+        `<strong>${escapeHTML(vehicle.name || info.label)}</strong>` +
+        ` <span class="transit-popup-mode">${escapeHTML(info.label.toUpperCase())}</span>`
+    ];
+
+    if (vehicle.longName && vehicle.longName !== vehicle.name) lines.push(escapeHTML(vehicle.longName));
+
+    lines.push(
+        [
+            escapeHTML(vehicle.feed),
+            vehicle.label ? `vehicle ${escapeHTML(vehicle.label)}` : "",
+            vehicle.speed !== null ? `${Math.round(vehicle.speed * 3.6)} km/h` : ""
+        ].filter(Boolean).join(" · ")
+    );
+
+    lines.push(
+        `<span class="transit-popup-live">GPS</span> position ` +
+        (seconds < 90 ? `${seconds} s ago` : `${Math.round(seconds / 60)} min ago`)
+    );
+
+    if (vehicle.credit) lines.push(`<small>${escapeHTML(vehicle.credit)}</small>`);
+
+    return lines.join("<br>");
+}
+
+function showTransitGpsVehicle(vehicle: TransitGpsVehicle): void {
+
+    transitSelectedId = vehicle.id;
+
+    transitHoverPopup.remove();
+
+    const now = Date.now();
+
+    const at = transitGpsPosition(vehicle, now);
+
+    transitVehiclePopup.setLngLat([at[0], at[1]]).setHTML(transitGpsHtml(vehicle, now));
+
+    if (!transitVehiclePopup.isOpen()) transitVehiclePopup.addTo(map);
+
+    tickTransitVehicles();
+}
+
+function clearTransitGps(): void {
+
+    transitGpsVehicles = new Map();
+    transitGpsCovers = [];
+    transitGpsNote = "";
+}
+
+function readTransitGps(rows: TransitGpsRow[], feeds: TransitGpsFeed[]): void {
+
+    const text = (value: unknown) => (typeof value === "string" ? value.trim() : "");
+    const number = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : null);
+
+    const vehicles = new Map<string, TransitGpsVehicle>();
+    const names = new Set<string>();
+
+    rows.forEach(function(row) {
+
+        if (!Array.isArray(row)) return;
+
+        const lat = number(row[1]);
+        const lon = number(row[2]);
+        const seconds = number(row[5]);
+
+        if (!text(row[0]) || lat === null || lon === null || seconds === null) return;
+
+        const mode = text(row[8]) || "BUS";
+
+        const vehicle: TransitGpsVehicle = {
+            id: TRANSIT_GPS_PREFIX + text(row[0]),
+            lat: lat,
+            lon: lon,
+            bearing: number(row[3]),
+            speed: number(row[4]),
+            t: Math.min(seconds * 1000, Date.now()),
+            name: text(row[6]),
+            longName: text(row[7]),
+            mode: mode,
+            color: transitColor(text(row[9]), mode),
+            label: text(row[10]),
+            feed: text(row[11]),
+            credit: text(row[12])
+        };
+
+        vehicles.set(vehicle.id, vehicle);
+
+        if (vehicle.feed) names.add(vehicle.feed);
+    });
+
+    transitGpsVehicles = vehicles;
+
+    // Per operator: the area it serves, and the lines its vehicles are on
+    transitGpsCovers = [];
+
+    feeds.forEach(function(feed) {
+
+        const box = feed && Array.isArray(feed.box) ? feed.box : [];
+        const lines = feed && Array.isArray(feed.lines) ? feed.lines : [];
+
+        if (box.length < 4 || !box.every(value => typeof value === "number") || !lines.length) return;
+
+        transitGpsCovers.push({
+            south: box[0],
+            west: box[1],
+            north: box[2],
+            east: box[3],
+            names: new Set(lines.filter(line => typeof line === "string").map(transitGpsLineKey))
+        });
+    });
+
+    transitGpsNote = vehicles.size
+        ? `${vehicles.size.toLocaleString("en-US")} at their real GPS position ` +
+          `(${Array.from(names).slice(0, 4).join(", ")}).`
+        : "";
+}
+
+async function refreshTransitGps(): Promise<void> {
+
+    if (!transitLiveEnabled || !map || document.hidden) return;
+
+    // No relay (page opened as a file, or not served by server.py): estimates only
+    if (transitGpsOk === false || !location.protocol.startsWith("http")) return;
+
+    clearTimeout(transitGpsTimer);
+
+    const box = transitViewBox(TRANSIT_LIVE_PAD);
+
+    if (map.getZoom() < TRANSIT_LIVE_MIN_ZOOM || !box) {
+        transitGpsGeneration++;
+        clearTransitGps();
+        return;
+    }
+
+    if (transitGpsBusy) return;
+
+    transitGpsBusy = true;
+
+    const generation = ++transitGpsGeneration;
+
+    try {
+
+        const query = new URLSearchParams({
+            south: box.south.toFixed(4),
+            west: box.west.toFixed(4),
+            north: box.north.toFixed(4),
+            east: box.east.toFixed(4)
+        });
+
+        const response = await fetch(`${TRANSIT_GPS_PATH}?${query}`);
+
+        const isJson = (response.headers.get("Content-Type") || "").includes("json");
+
+        if (generation !== transitGpsGeneration) return;
+
+        // Served by something other than server.py, or an older server.py
+        if (!isJson || response.status === 404 || response.status === 400) {
+            transitGpsOk = false;
+            return;
+        }
+
+        if (!response.ok) throw new Error(`Transit GPS relay answered ${response.status}`);
+
+        const payload = await response.json() as {
+            available?: boolean; vehicles?: TransitGpsRow[]; discovering?: boolean;
+            feeds?: TransitGpsFeed[];
+        };
+
+        if (generation !== transitGpsGeneration) return;
+
+        transitGpsOk = true;
+
+        transitGpsActive = Boolean(payload.available || payload.discovering);
+
+        readTransitGps(
+            Array.isArray(payload.vehicles) ? payload.vehicles : [],
+            Array.isArray(payload.feeds) ? payload.feeds : []
+        );
+
+        tickTransitVehicles();
+
+    } catch (error) {
+
+        if (transitGpsOk === null) transitGpsOk = false;
+
+        console.warn("Transit GPS positions failed:", error);
+
+    } finally {
+
+        transitGpsBusy = false;
+
+        // (with no feed for this area, the slower timetable update asks again:
+        // every 30 s and whenever the map moves)
+        if (transitLiveEnabled && transitGpsOk && transitGpsActive) {
+            clearTimeout(transitGpsTimer);
+            transitGpsTimer = setTimeout(refreshTransitGps, TRANSIT_GPS_POLL_MS);
+        }
     }
 }
 
@@ -2589,7 +2974,8 @@ function onTransitHover(e: MapMouseEvent): void {
 
         map.getCanvas().style.cursor = "pointer";
 
-        const stored = transitVehicles.get(vehicle.properties.id);
+        const stored = transitVehicles.get(vehicle.properties.id) ||
+            transitGpsVehicles.get(vehicle.properties.id);
 
         // The clicked vehicle already has its popup open
         if (vehicle.properties.id === transitSelectedId) {
@@ -2602,7 +2988,8 @@ function onTransitHover(e: MapMouseEvent): void {
             .setText(
                 (vehicle.properties.name || "Vehicle") + "  |  " +
                 transitModeInfo(stored ? stored.mode : "").label +
-                (vehicle.properties.realTime ? "  |  LIVE" : "")
+                (String(vehicle.properties.id).startsWith(TRANSIT_GPS_PREFIX) ? "  |  GPS"
+                    : vehicle.properties.realTime ? "  |  LIVE" : "")
             )
             .addTo(map);
 
@@ -2665,6 +3052,13 @@ function onTransitClick(e: MapMouseEvent): void {
 
     const feature = transitVehicleAt(e.point);
 
+    const gpsVehicle = feature ? transitGpsVehicles.get(feature.properties.id) : undefined;
+
+    if (gpsVehicle) {
+        showTransitGpsVehicle(gpsVehicle);
+        return;
+    }
+
     const vehicle = feature ? transitVehicles.get(feature.properties.id) : undefined;
 
     if (!vehicle) {
@@ -2680,6 +3074,9 @@ function onTransitClick(e: MapMouseEvent): void {
 
             return;
         }
+
+        // A ship on top of a ferry line opens its own popup (see ships.ts)
+        if (typeof isShipAtPoint === "function" && isShipAtPoint(e.point)) return;
 
         // Not a vehicle: a line? Highlight its whole route. Where several
         // lines share the track, clicking the same spot again takes the next.
