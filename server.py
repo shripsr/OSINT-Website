@@ -1777,7 +1777,7 @@ GPS_MAX_AGE = 300               # a position older than this is not shown
 GPS_FEEDS_PER_VIEW = 15         # most feeds asked for one view
 GPS_REPLY_LIMIT = 5000          # most vehicles sent to the page at once
 GPS_FEED_MAX_BYTES = 25 * 1024 * 1024
-GPS_STATIC_MAX_BYTES = 250 * 1024 * 1024
+GPS_STATIC_MAX_BYTES = 300 * 1024 * 1024   # (the Dutch timetable is 275 MB; only routes.txt is read from it)
 GPS_ROUTES_TTL = 7 * 86400
 GPS_DISCOVER_TTL = 7 * 86400
 GPS_DISCOVER_MAX_SPAN = 6.0     # no catalogue lookups for views wider than this (degrees)
@@ -2062,9 +2062,15 @@ def _gps_rows(feed, state, now):
     for v in state.get("raw") or []:
         if v["t"] and now - v["t"] > GPS_MAX_AGE:
             continue
+        # (a few feeds send a bad fix far outside their own area)
+        box = feed["box"]
+        if not (box[0] - 0.5 <= v["lat"] <= box[2] + 0.5 and box[1] - 0.5 <= v["lon"] <= box[3] + 0.5):
+            continue
         route = routes.get(v["route_id"])
-        # (a raw route id is only shown when there is no timetable to translate it)
-        name = (route[0] or route[1]) if route else ("" if feed["static_url"] else v["route_id"])
+        # (a raw route id is only shown when there is no timetable to translate it;
+        # "OST:Line:1_199" is shown as "1_199")
+        name = ((route[0] or route[1]) if route
+                else ("" if feed["static_url"] else v["route_id"].rsplit(":", 1)[-1]))
         rows.append([
             f"{feed['key']}|{v['id'] or v['trip_id']}",
             round(v["lat"], 5), round(v["lon"], 5),
@@ -2234,6 +2240,55 @@ def save_gps_feeds():
         print(f"Transit GPS: the feed list could not be saved ({error})")
 
 
+# Cities whose operators publish real GPS positions with no key at all (GTFS-Realtime
+# "vehicle positions"). (key, name, positions feed, (south, west, north, east),
+# timetable download for the route names, credit)
+GPS_FREE_FEEDS = (
+    ("hsl", "HSL Helsinki", "https://realtime.hsl.fi/realtime/vehicle-positions/v2/hsl",
+     (59.9, 23.5, 61.6, 25.7), "https://infopalvelut.storage.hsldev.com/gtfs/hsl.zip",
+     "Data: HSL / Helsinki Region Transport, CC BY 4.0"),
+    # (no timetable download: the national one is over half a gigabyte)
+    ("entur", "Norway (Entur)", "https://api.entur.io/realtime/v1/gtfs-rt/vehicle-positions",
+     (57.5, 4.0, 71.5, 31.5), "",
+     "Data: Entur (entur.org), NLOD"),
+    ("ovapi", "Netherlands (OVapi)", "https://gtfs.ovapi.nl/nl/vehiclePositions.pb",
+     (50.7, 3.2, 53.6, 7.3), "https://gtfs.ovapi.nl/nl/gtfs-nl.zip",
+     "Data: OVapi / NDOV (ndovloket.nl)"),
+    ("ttc", "TTC Toronto", "https://bustime.ttc.ca/gtfsrt/vehicles",
+     (43.4, -79.9, 44.0, -78.9),
+     "https://ckan0.cf.opendata.inter.prod-toronto.ca/dataset/7795b45e-e65a-4465-81fc-c36b9dfff169/"
+     "resource/cfb6b2b8-6191-41e3-bda1-b175c51148cb/download/completegtfs.zip",
+     "Contains information licensed under the Open Government Licence - Toronto"),
+    ("calgary", "Calgary Transit",
+     "https://data.calgary.ca/download/am7c-qe3u/application%2Foctet-stream",
+     (50.8, -114.4, 51.3, -113.8), "https://data.calgary.ca/download/npk7-z3bj/application%2Fzip",
+     "Contains information licensed under the Open Government Licence - City of Calgary"),
+    ("edmonton", "Edmonton Transit",
+     "https://gtfs.edmonton.ca/TMGTFSRealTimeWebService/Vehicle/VehiclePositions.pb",
+     (53.3, -113.8, 53.7, -113.2), "https://gtfs.edmonton.ca/TMGTFSRealTimeWebService/GTFS/gtfs.zip",
+     "Contains information licensed under the Open Government Licence - City of Edmonton"),
+    ("rtd", "RTD Denver", "https://open-data.rtd-denver.com/files/gtfs-rt/rtd/VehiclePosition.pb",
+     (39.4, -105.6, 40.3, -104.6), "https://www.rtd-denver.com/files/gtfs/google_transit.zip",
+     "Data: Regional Transportation District (RTD) open data"),
+    ("austin", "CapMetro Austin",
+     "https://data.texas.gov/download/eiei-9rpf/application%2Foctet-stream",
+     (30.0, -98.0, 30.8, -97.5), "https://data.texas.gov/download/r4v4-vz24/application%2Fzip",
+     "Data: Capital Metro via the Texas Open Data Portal"),
+    # (its download holds two zips inside one, so there are no route names; the bus lines are numbered anyway)
+    ("septa", "SEPTA Philadelphia",
+     "https://www3.septa.org/gtfsrt/septa-pa-us/Vehicle/rtVehiclePosition.pb",
+     (39.8, -75.7, 40.4, -74.9), "",
+     "Data: SEPTA"),
+    ("rome", "Rome (Roma Mobilita)",
+     "https://romamobilita.it/sites/default/files/rome_rtgtfs_vehicle_positions_feed.pb",
+     (41.6, 12.1, 42.2, 12.8), "https://romamobilita.it/sites/default/files/rome_static_gtfs.zip",
+     "Data: Roma Servizi per la Mobilita, CC BY"),
+    ("vilnius", "Vilnius (stops.lt)", "https://www.stops.lt/vilnius/vehicle_positions.pb",
+     (54.5, 25.0, 54.9, 25.5), "https://www.stops.lt/vilnius/vilnius/gtfs.zip",
+     "Data: Vilnius city public transport (stops.lt)"),
+)
+
+
 def load_gps_feeds():
     with _gps_lock:
         if TRANSLINK_API_KEY:
@@ -2247,6 +2302,8 @@ def load_gps_feeds():
         add_gps_feed("mbta", "MBTA", "https://cdn.mbta.com/realtime/VehiclePositions.pb",
                      (41.2, -72.0, 43.0, -69.9),
                      static_url="https://cdn.mbta.com/MBTA_GTFS.zip")
+        for key, name, url, box, static_url, credit in GPS_FREE_FEEDS:
+            add_gps_feed(key, name, url, box, static_url=static_url, credit=credit)
         try:
             with open(GPS_FEEDS_FILE, encoding="utf-8") as handle:
                 saved = json.load(handle)
@@ -2356,6 +2413,93 @@ def get_gps_vehicles(south, west, north, east):
 
     return {"available": bool(covering or lookups or discovering),
             "vehicles": rows[:GPS_REPLY_LIMIT], "feeds": summary, "discovering": discovering}
+
+
+# ---------- trains (the sources that need a key; the rest the page asks itself) ----------
+#
+#   Sweden:    Trafikverket Open API, free key: https://data.trafikverket.se
+#              -> TRAFIKVERKET_API_KEY. All trains with GPS, passenger and freight.
+#
+# The page asks "/api/rail"; the keys never leave this file.
+
+RAIL_CACHE_SECONDS = 20
+_rail_lock = threading.Lock()
+_rail_cache = {"time": 0.0, "reply": None}
+
+TRAFIKVERKET_URL = "https://api.trafikinfo.trafikverket.se/v2/data.json"
+
+def _rail_time(text):
+    try:
+        return int(datetime.datetime.fromisoformat(str(text).replace("Z", "+00:00")).timestamp() * 1000)
+    except ValueError:
+        return int(time.time() * 1000)
+
+
+def rail_sweden(key):
+    query = (
+        '<REQUEST><LOGIN authenticationkey="%s"/>'
+        '<QUERY objecttype="TrainPosition" namespace="järnväg.trafikinfo" '
+        'schemaversion="1.0" limit="3000">'
+        '<FILTER><GT name="TimeStamp" value="$dateadd(-0.00:10:00)"/></FILTER>'
+        '<INCLUDE>Train</INCLUDE><INCLUDE>Position</INCLUDE><INCLUDE>Bearing</INCLUDE>'
+        '<INCLUDE>Speed</INCLUDE><INCLUDE>TimeStamp</INCLUDE><INCLUDE>Status</INCLUDE>'
+        '<INCLUDE>Deleted</INCLUDE>'
+        '</QUERY></REQUEST>' % key).encode("utf-8")
+    request = urllib.request.Request(TRAFIKVERKET_URL, data=query, headers={
+        "Content-Type": "text/xml", "Accept": "application/json", "User-Agent": PHOTO_USER_AGENT})
+    with urllib.request.urlopen(request, timeout=25) as response:
+        payload = json.loads(response.read(16 * 1024 * 1024).decode("utf-8"))
+    rows = []
+    for item in ((payload.get("RESPONSE", {}).get("RESULT") or [{}])[0].get("TrainPosition") or []):
+        if item.get("Deleted"):
+            continue
+        match = re.search(r"POINT\s*\(\s*([-\d.]+)\s+([-\d.]+)", (item.get("Position") or {}).get("WGS84", ""))
+        if not match:
+            continue
+        train = item.get("Train") or {}
+        number = str(train.get("AdvertisedTrainNumber") or train.get("OperationalTrainNumber") or "")
+        # Swedish numbering: passenger trains are below 10000, freight above (a guess)
+        kind = "other"
+        if number.isdigit():
+            kind = "passenger" if int(number) < 10000 else "freight"
+        rows.append({
+            "id": f"se|{train.get('OperationalTrainNumber') or number}|{str(train.get('OperationalTrainDepartureDate', ''))[:10]}",
+            "kind": kind, "number": number, "name": "",
+            "lat": float(match.group(2)), "lon": float(match.group(1)),
+            "t": _rail_time(item.get("TimeStamp")),
+            "kmh": _clean_number(item.get("Speed")), "heading": _clean_number(item.get("Bearing")),
+            "from": "", "to": "", "operator": "",
+            "note": "Kind guessed from the train number" if kind != "other" else "", "src": "se"})
+    return rows
+
+
+def get_rail():
+    """Trains from the keyed sources, cached for a few seconds."""
+    with _rail_lock:
+        if _rail_cache["reply"] and time.time() - _rail_cache["time"] < RAIL_CACHE_SECONDS:
+            return _rail_cache["reply"]
+    reply = {"trains": [], "sources": {}}
+    jobs = (
+        ("se", os.environ.get("TRAFIKVERKET_API_KEY", "").strip(), rail_sweden),
+    )
+    for name, key, reader in jobs:
+        if not key:
+            reply["sources"][name] = "nokey"
+            continue
+        try:
+            result = reader(key)
+            if isinstance(result, tuple):
+                result, errors = result
+                reply["sources"][name] = "; ".join(errors) if errors and not result else "ok"
+            else:
+                reply["sources"][name] = "ok"
+            reply["trains"].extend(result)
+        except Exception as error:  # noqa: BLE001
+            print(f"Rail source {name} failed ({error})")
+            reply["sources"][name] = str(error)[:120]
+    with _rail_lock:
+        _rail_cache.update(time=time.time(), reply=reply)
+    return reply
 
 
 def get_ship_trail(mmsi):
@@ -2535,6 +2679,13 @@ class Handler(SimpleHTTPRequestHandler):
                 print(f"Ship relay failed ({error})")
                 return self.send_json(502, {"error": str(error)})
 
+        if url.path == "/api/rail":
+            try:
+                return self.send_json(200, get_rail())
+            except Exception as error:  # noqa: BLE001
+                print(f"Rail relay failed ({error})")
+                return self.send_json(502, {"error": str(error)})
+
         if url.path == "/api/transit/vehicles":
             query = urllib.parse.parse_qs(url.query)
             try:
@@ -2654,6 +2805,10 @@ if __name__ == "__main__":
                                              ("Mobility Database", MOBILITY_DATABASE_REFRESH_TOKEN))
                        if on)
              or "nothing (TRANSITLAND_API_KEY / MOBILITY_DATABASE_REFRESH_TOKEN in .env)"))
+    print("Rail: Finland, Norway and Amtrak / VIA / Brightline need no key (the page asks them itself)")
+    print("Rail: Trafikverket key found (Sweden, passenger + freight)"
+          if os.environ.get("TRAFIKVERKET_API_KEY", "").strip() else
+          "Rail: no Trafikverket key (TRAFIKVERKET_API_KEY in .env for Sweden).")
     if AISSTREAM_API_KEY or PELYR_API_KEY or VESSELAPI_KEY:
         load_ships()
         start_ship_stream()

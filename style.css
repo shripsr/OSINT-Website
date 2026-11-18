@@ -937,13 +937,29 @@ body:has(#flightPanel.visible) .inspection-panel {
 
 /* Status + altitude legend (bottom left, above the scale bar) */
 
-.flight-hud {
-    display: none;
-
+.hud-stack {
     position: absolute;
 
     left: 10px;
     bottom: 48px;
+
+    display: flex;
+    flex-direction: column-reverse;
+    align-items: flex-start;
+    gap: 8px;
+
+    z-index: 700;
+    pointer-events: none;
+}
+
+.hud-stack > .flight-hud {
+    pointer-events: auto;
+}
+
+.flight-hud {
+    display: none;
+
+    position: relative;
 
     padding: 10px 12px;
 
@@ -1032,11 +1048,7 @@ body:has(#flightPanel.visible) .inspection-panel {
 }
 
 
-/* Ship legend: the same box, moved over when the flight one is showing too */
-
-.flight-hud.visible ~ .ship-hud {
-    left: 278px;
-}
+/* Ship legend: the same box, stacked above the flight one (see .hud-stack) */
 
 .ship-legend-note {
     flex: 0 0 100%;

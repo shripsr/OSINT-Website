@@ -120,6 +120,13 @@
             <span class="item-count" id="shipCount">OFF</span>
         </div>
 
+        <!-- Live passenger + freight train positions (see rail.ts) -->
+        <div class="menu-item" id="railToggle">
+            <span>&#128646;&#xFE0E;</span>
+            Rail Tracking
+            <span class="item-count" id="railCount">OFF</span>
+        </div>
+
 
         <div class="section-title">BASE MAP</div>
 
@@ -537,6 +544,8 @@
         </div>
 
 
+        <div class="hud-stack">
+
         <!-- FLIGHT HUD (status + legend) -->
 
         <div class="flight-hud" id="flightHud">
@@ -551,8 +560,6 @@
             <div class="flight-legend" id="flightLegend"></div>
 
         </div>
-
-        <div class="flight-notice" id="flightNotice"></div>
 
 
         <!-- SHIP HUD (count + colour legend, see ships.ts) -->
@@ -569,6 +576,25 @@
             <div class="flight-legend" id="shipLegend"></div>
 
         </div>
+
+        <!-- RAIL HUD (count + colour legend, see rail.ts) -->
+
+        <div class="flight-hud rail-hud" id="railHud">
+
+            <div class="flight-hud-title">
+                LIVE TRAINS
+                <span id="railHudCount">0</span>
+            </div>
+
+            <div class="flight-hud-status" id="railHudStatus">--</div>
+
+            <div class="flight-legend" id="railLegend"></div>
+
+        </div>
+
+        </div>
+
+        <div class="flight-notice" id="flightNotice"></div>
 
 
         <!-- MAP ERROR -->
@@ -629,6 +655,10 @@
     <!-- SHIP TRACKING (after transit.js, before script.js) -->
 
     <script src="ships.js"></script>
+
+    <!-- RAIL TRACKING (after ships.js, before script.js) -->
+
+    <script src="rail.js"></script>
 
     <!-- MAIN SCRIPT -->
 

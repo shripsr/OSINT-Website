@@ -153,6 +153,9 @@ function initializeMap() {
             // Clicking a ship opens its popup instead
             if (isShipAtPoint(e.point))
                 return;
+            // Clicking a train opens its popup instead
+            if (isRailAtPoint(e.point))
+                return;
             inspectLocation(e.lngLat.lat, e.lngLat.lng);
         });
         // MAP STYLE CHANGE
@@ -169,6 +172,8 @@ function initializeMap() {
         initializeTransit();
         // SHIP TRACKING (see ships.js)
         initializeShips();
+        // RAIL TRACKING (see rail.js)
+        initializeRail();
     }
     catch (error) {
         console.error(error);

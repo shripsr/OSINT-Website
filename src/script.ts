@@ -252,6 +252,9 @@ function initializeMap(): void {
             // Clicking a ship opens its popup instead
             if (isShipAtPoint(e.point)) return;
 
+            // Clicking a train opens its popup instead
+            if (isRailAtPoint(e.point)) return;
+
             inspectLocation(
                 e.lngLat.lat,
                 e.lngLat.lng
@@ -287,6 +290,11 @@ function initializeMap(): void {
         // SHIP TRACKING (see ships.js)
 
         initializeShips();
+
+
+        // RAIL TRACKING (see rail.js)
+
+        initializeRail();
 
     }
 

@@ -913,9 +913,8 @@ function setupFlightLayers() {
                     2, 1,
                     4, 1.25,
                     6, 1.5,
-                    10, 2,
-                    14, 2.5,
-                    18, 3
+                    10, 1.75,
+                    18, 2
                 ],
                 "symbol-sort-key": ["get", "sort"]
             }

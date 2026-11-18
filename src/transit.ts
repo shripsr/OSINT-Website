@@ -3077,6 +3077,7 @@ function onTransitClick(e: MapMouseEvent): void {
 
         // A ship on top of a ferry line opens its own popup (see ships.ts)
         if (typeof isShipAtPoint === "function" && isShipAtPoint(e.point)) return;
+        if (typeof isRailAtPoint === "function" && isRailAtPoint(e.point)) return;
 
         // Not a vehicle: a line? Highlight its whole route. Where several
         // lines share the track, clicking the same spot again takes the next.
