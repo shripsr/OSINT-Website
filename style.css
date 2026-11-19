@@ -1638,3 +1638,58 @@ a.transit-popup-button {
 .transit-popup .maplibregl-popup-content small {
     color: #a9b8c8;
 }
+
+
+/* Satellites: clickable legend + labelled rows in the popup */
+.sat-legend-item {
+    cursor: pointer;
+    user-select: none;
+}
+
+.sat-legend-item.sat-off {
+    opacity: 0.4;
+    text-decoration: line-through;
+}
+
+.sat-legend-count {
+    margin-left: auto;
+    padding-left: 10px;
+    font-weight: normal;
+    color: #a9b8c8;
+}
+
+.sat-hud .flight-legend span.sat-legend-item {
+    display: flex;
+    align-items: center;
+}
+
+.transit-popup .sat-label {
+    color: #a9b8c8;
+}
+
+.transit-popup .sat-heading {
+    display: inline-block;
+    margin-top: 6px;
+    color: #6fe3f5;
+    font-size: 10px;
+    letter-spacing: 1.5px;
+}
+
+.sat-hud .flight-legend span.sat-legend-item {
+    flex: 0 0 100%;
+}
+
+/* Satellite legend swatches: a tilted panel-and-body shape, a square for stations */
+.sat-hud .flight-legend i.sat-dot {
+    width: 11px;
+    height: 5px;
+    border-radius: 1px;
+    transform: rotate(-45deg);
+}
+
+.sat-hud .flight-legend i.sat-dot-station {
+    width: 10px;
+    height: 10px;
+    border-radius: 1px;
+    box-shadow: inset 0 0 0 2px #0b1520;
+}

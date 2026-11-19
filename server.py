@@ -2573,6 +2573,118 @@ def get_cables():
             ',"landings":' + landings + "}")
 
 
+# ----------------------------------------------------------------------
+# SATELLITES (CelesTrak, celestrak.org: orbital elements + the SATCAT register)
+# The page works out where every satellite is itself (SGP4, in the browser),
+# so all it needs from here is the elements and who owns / launched what.
+# CelesTrak allows ONE download per feed every 2 hours and blocks people who
+# ask more often, so: one merged copy, kept on disk, refreshed every 3 hours,
+# and the old copy is served if a refresh fails (waiting 15 min before retry).
+# ----------------------------------------------------------------------
+
+SAT_GROUP = os.environ.get("SATELLITE_GROUP", "active")
+# If the main feed can't be had (CelesTrak refuses a second download within 2
+# hours, or is down) and nothing is cached, show this smaller feed instead and
+# try the main one again every SAT_RETRY_SECONDS.
+SAT_FALLBACK_GROUP = os.environ.get("SATELLITE_FALLBACK_GROUP", "visual")
+SAT_CACHE_SECONDS = 3 * 3600
+SAT_RETRY_SECONDS = 15 * 60
+SAT_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".satellite_cache.json")
+_sat_lock = threading.Lock()
+_sat = {"time": 0.0, "plain": None, "gzip": None, "group": "", "failed": 0.0, "error": ""}
+_sat_loaded = False
+
+
+def _sat_fetch_json(url):
+    request = urllib.request.Request(url, headers={"User-Agent": "osint-map"})
+    with urllib.request.urlopen(request, timeout=120) as response:
+        text = response.read().decode("utf-8")
+    try:
+        return json.loads(text)
+    except ValueError:
+        # CelesTrak answers a too-early request with a plain-text note
+        raise RuntimeError(" ".join(text.split())[:200] or "not JSON")
+
+
+def _sat_download(group):
+    """Fetch one CelesTrak group (elements + register), merged, as JSON bytes."""
+    elements = _sat_fetch_json(
+        f"https://celestrak.org/NORAD/elements/gp.php?GROUP={group}&FORMAT=json")
+    register = _sat_fetch_json(
+        f"https://celestrak.org/satcat/records.php?GROUP={group}&FORMAT=json")
+    info = {}
+    for row in register:
+        info[str(row["NORAD_CAT_ID"])] = {
+            k: v for k, v in (
+                ("ty", row.get("OBJECT_TYPE")), ("ow", row.get("OWNER")),
+                ("ld", row.get("LAUNCH_DATE")), ("ls", row.get("LAUNCH_SITE")),
+                ("os", row.get("OPS_STATUS_CODE")), ("rcs", row.get("RCS")),
+                ("apo", row.get("APOGEE")), ("per", row.get("PERIGEE")),
+                ("dd", row.get("DECAY_DATE"))) if v not in (None, "")}
+    fetched = time.time()
+    plain = json.dumps({"fetched": fetched, "group": group, "full": group == SAT_GROUP,
+                        "gp": elements, "cat": info},
+                       separators=(",", ":")).encode("utf-8")
+    return fetched, plain
+
+
+def _sat_store(fetched, group, plain, to_disk=True):
+    _sat.update(time=fetched, group=group, plain=plain, gzip=gzip.compress(plain, 6))
+    if to_disk:
+        try:
+            with open(SAT_CACHE_FILE, "wb") as handle:
+                handle.write(plain)
+        except OSError:
+            pass
+
+
+def _sat_load_disk():
+    global _sat_loaded
+    if _sat_loaded:
+        return
+    _sat_loaded = True
+    try:
+        with open(SAT_CACHE_FILE, "rb") as handle:
+            plain = handle.read()
+        head = json.loads(plain)
+        _sat_store(head["fetched"], head.get("group", ""), plain, to_disk=False)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def get_satellites(want_gzip):
+    """(body bytes, is gzip). Raises if there is nothing at all to show."""
+    with _sat_lock:
+        _sat_load_disk()
+        now = time.time()
+        have = bool(_sat["plain"])
+        full = have and _sat["group"] == SAT_GROUP
+        # a full copy is good for 3 hours; a reduced one only until we can try again
+        fresh = have and now - _sat["time"] < (SAT_CACHE_SECONDS if full else SAT_RETRY_SECONDS)
+        backing_off = now - _sat["failed"] < SAT_RETRY_SECONDS
+        if not fresh and not backing_off:
+            try:
+                fetched, plain = _sat_download(SAT_GROUP)
+                _sat_store(fetched, SAT_GROUP, plain)
+                _sat["error"] = ""
+            except Exception as error:  # noqa: BLE001
+                _sat["failed"] = time.time()
+                _sat["error"] = str(error)
+                print(f"Satellite refresh of '{SAT_GROUP}' failed ({error})")
+                # nothing usable cached (or only a reduced copy that is old): fall back
+                stale_ok = have and (full or now - _sat["time"] < SAT_CACHE_SECONDS)
+                if not stale_ok and SAT_FALLBACK_GROUP and SAT_FALLBACK_GROUP != SAT_GROUP:
+                    try:
+                        fetched, plain = _sat_download(SAT_FALLBACK_GROUP)
+                        _sat_store(fetched, SAT_FALLBACK_GROUP, plain)
+                        print(f"Showing the '{SAT_FALLBACK_GROUP}' satellites instead")
+                    except Exception as fallback_error:  # noqa: BLE001
+                        print(f"Satellite fallback failed too ({fallback_error})")
+        if not _sat["plain"]:
+            raise RuntimeError(_sat["error"] or "satellite data not available yet")
+        return (_sat["gzip"], True) if want_gzip else (_sat["plain"], False)
+
+
 def get_ship_trail(mmsi):
     """Where the relay has seen this ship go since it started listening."""
     with _ships_lock:
@@ -2749,6 +2861,20 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as error:  # noqa: BLE001
                 print(f"Ship relay failed ({error})")
                 return self.send_json(502, {"error": str(error)})
+
+        if url.path == "/api/satellites":
+            try:
+                body, zipped = get_satellites("gzip" in (self.headers.get("Accept-Encoding") or ""))
+            except Exception as error:  # noqa: BLE001
+                return self.send_json(503, {"error": str(error)})
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            if zipped:
+                self.send_header("Content-Encoding", "gzip")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
 
         if url.path == "/api/cables":
             try:

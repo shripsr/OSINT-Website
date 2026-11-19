@@ -354,7 +354,8 @@ function cableCoveredByOther(point) {
     return Boolean(isFlightAtPoint(point) ||
         (typeof isShipAtPoint === "function" && isShipAtPoint(point)) ||
         (typeof isRailAtPoint === "function" && isRailAtPoint(point)) ||
-        (typeof isTransitAtPoint === "function" && isTransitAtPoint(point)));
+        (typeof isTransitAtPoint === "function" && isTransitAtPoint(point)) ||
+        (typeof isSatelliteAtPoint === "function" && isSatelliteAtPoint(point)));
 }
 function cableLink(label, url) {
     return `<a href="${escapeHTML(url)}" target="_blank" rel="noopener noreferrer">${escapeHTML(label)}</a>`;

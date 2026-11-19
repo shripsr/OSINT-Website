@@ -2,7 +2,7 @@
 ## Working on the code (TypeScript)
 
 The browser code is written in TypeScript in `src/` and compiled to the
-`flights.js`, `transit.js`, `ships.js`, `rail.js` and `script.js` files that `index.html` loads.
+`flights.js`, `transit.js`, `ships.js`, `rail.js`, `cables.js`, `satellites.js` and `script.js` files that `index.html` loads.
 
 | File | What it is |
 |---|---|
@@ -10,10 +10,12 @@ The browser code is written in TypeScript in `src/` and compiled to the
 | `src/transit.ts` | Transit line maps and live transit vehicles (Transitous; real GPS positions from TransLink, MBTA and feeds found via Transitland / Mobility Database when their keys are in `.env`) |
 | `src/ships.ts` | Live ship positions (AIS: worldwide from aisstream.io and Pelyr with `AISSTREAM_API_KEY` / `PELYR_API_KEY` in `.env` (`VESSELAPI_KEY` as a backup), otherwise Finland / northern Baltic from Digitraffic) |
 | `src/rail.ts` | Live train positions: passenger + freight in Finland (Digitraffic), Amtrak / VIA Rail / Brightline (Amtraker), Norway (Entur); Sweden (passenger + freight) with `TRAFIKVERKET_API_KEY` in `.env` |
+| `src/cables.ts` | Undersea (submarine) cable routes, landing stations and cable details (TeleGeography) |
+| `src/satellites.ts` | Live satellite positions (worked out in the browser), orbit ground tracks and satellite details (CelesTrak) |
 | `src/script.ts` | Map setup, search, saved locations |
 | `src/types.d.ts` | Shared types (aircraft, airports, routes, ...) |
-| `src/globals.d.ts` | Things loaded by `<script>` tags (MapLibre, `config.js`) |
-| `flights.js`, `transit.js`, `ships.js`, `rail.js`, `script.js` | **Generated. Don't edit these**, edit the `.ts` files |
+| `src/globals.d.ts` | Things loaded by `<script>` tags (MapLibre, satellite.js, `config.js`) |
+| `flights.js`, `transit.js`, `ships.js`, `rail.js`, `cables.js`, `satellites.js`, `script.js` | **Generated. Don't edit these**, edit the `.ts` files |
 
 One-time setup (needs [Node.js](https://nodejs.org)):
 
@@ -48,6 +50,8 @@ layers fall back to the free sources.
 | Transit | Yes (estimated positions) | `TRANSLINK_API_KEY`, `TRANSITLAND_API_KEY`, `MOBILITY_DATABASE_REFRESH_TOKEN` |
 | Ships | Yes, but only Finland / the Baltic | `AISSTREAM_API_KEY`, `PELYR_API_KEY`, `VESSELAPI_KEY` |
 | Rail | Yes (Finland, Norway, USA/Canada) | `TRAFIKVERKET_API_KEY` (Sweden) |
+| Subsea Cables | Yes (needs `server.py`) | None |
+| Satellites | Yes (needs `server.py`) | None |
 
 If you open `index.html` as a plain file instead of through `server.py`, the
 layers that can ask their sources directly still work, but anything that needs
@@ -212,3 +216,76 @@ your computer and are never sent to the browser:
 A wrong key shows up as an error line on the switch's tooltip (for example
 `HTTP Error 401`), not in the terminal. If you open `index.html` as a plain file
 instead of through `server.py`, only Finland, Norway and Amtrak work.
+
+
+## Subsea cables: where it works
+
+The **Subsea Cables** switch draws every undersea telecom cable system in the
+world (about 735) and every landing station where they come ashore (about
+1,900). Each cable has its own colour.
+
+- **Click a cable**: it is highlighted and a popup shows its status (in service
+  since / planned), length, owners, builder, landing points and website.
+- **Click a landing station**: the popup lists every cable that comes ashore there.
+- Routes are approximate (TeleGeography draws them for a map, not for survey use).
+
+| What | Source | Key needed? |
+|---|---|---|
+| Cable routes, landing stations, details | [TeleGeography Submarine Cable Map](https://www.submarinecablemap.com), CC BY-SA 4.0 (credited in the footer and popups) | No |
+
+### How the APIs are connected
+
+TeleGeography's API does not allow browsers to call it directly, so the page
+asks `server.py` (`/api/cables`, `/api/cables/<id>`, `/api/cables/landing/<id>`).
+Cable routes change rarely, so the server keeps a copy for **7 days**, saved to
+`.cable_cache.json` (git-ignored) so a restart doesn't download it again. If a
+refresh fails, the old copy is still served. The popups and the cable box show
+when the server last fetched the data. Without `server.py` this layer does not work.
+
+
+## Satellites: where it works
+
+The **Satellites** switch shows about 12,000 active satellites worldwide, with
+an icon coloured by kind: space stations / crewed, Starlink, other
+constellations, navigation (GPS, Galileo, ...), weather / Earth observation,
+and other. Click an entry in the legend box to hide or show that kind.
+
+- **Click a satellite**: its **ground track** is drawn (the line it traces over
+  the Earth's surface): solid for the next full orbit, dashed for the last half
+  orbit. The popup shows its type and status, NORAD ID, owner / country, launch
+  date and site, live altitude, speed and position, the orbit (LEO / MEO / GEO /
+  HEO, period, inclination, apogee and perigee) and its radar size.
+- The map cannot draw altitude, so the path is a ground track, not a 3D orbit
+  ring, even in globe mode.
+- The kind of a satellite is guessed from its name (CelesTrak has no such field),
+  so a few can land in "Other".
+
+| What | Source | Key needed? |
+|---|---|---|
+| Orbital elements | [CelesTrak](https://celestrak.org) GP data | No |
+| Owner, launch date and site, size, status | CelesTrak SATCAT register | No |
+| Orbit maths (SGP4) | [satellite.js](https://github.com/shashwatak/satellite-js) 6.0.1, loaded from cdnjs | No |
+
+### How the APIs are connected
+
+Positions are **not downloaded**: the browser works them out itself every 2
+seconds from the orbital elements (SGP4, accurate to about a kilometre for fresh
+elements). `server.py` (`/api/satellites`) only fetches and merges the elements
+and the register, gzipped.
+
+CelesTrak allows **one download per feed every 2 hours** and blocks clients that
+ask more often, so the server keeps one merged copy in `.satellite_cache.json`
+(git-ignored), refreshes it every 3 hours, and serves the old copy if a refresh
+fails. If the full `active` feed cannot be had (for example because it was
+downloaded less than 2 hours ago) and nothing is cached, it shows the small
+`visual` feed (about 150 bright satellites) instead, tries the full one again
+every 15 minutes, and the page swaps it in on its own. The legend box says when
+you are looking at the reduced set. In `.env` or the environment:
+
+| Variable | Default | What |
+|---|---|---|
+| `SATELLITE_GROUP` | `active` | Which CelesTrak group to show (`stations`, `starlink`, `weather`, `gps-ops`, `visual`, ...) |
+| `SATELLITE_FALLBACK_GROUP` | `visual` | What to show when the main group is unavailable |
+
+Icon sizes are the `icon-size` setting in `src/satellites.ts` (a size per zoom level).
+

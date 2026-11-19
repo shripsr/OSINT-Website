@@ -495,7 +495,8 @@ function cableCoveredByOther(point: MapPoint): boolean {
         isFlightAtPoint(point) ||
         (typeof isShipAtPoint === "function" && isShipAtPoint(point)) ||
         (typeof isRailAtPoint === "function" && isRailAtPoint(point)) ||
-        (typeof isTransitAtPoint === "function" && isTransitAtPoint(point))
+        (typeof isTransitAtPoint === "function" && isTransitAtPoint(point)) ||
+        (typeof isSatelliteAtPoint === "function" && isSatelliteAtPoint(point))
     );
 }
 

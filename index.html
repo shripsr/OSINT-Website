@@ -134,6 +134,13 @@
             <span class="item-count" id="cableCount">OFF</span>
         </div>
 
+        <!-- Live satellite positions, orbit paths and details (see satellites.ts) -->
+        <div class="menu-item" id="satToggle">
+            <span>&#10022;</span>
+            Satellites
+            <span class="item-count" id="satCount">OFF</span>
+        </div>
+
 
         <div class="section-title">BASE MAP</div>
 
@@ -616,6 +623,23 @@
 
         </div>
 
+        <!-- SATELLITE HUD (count + clickable legend, see satellites.ts) -->
+
+        <div class="flight-hud sat-hud" id="satHud">
+
+            <div class="flight-hud-title">
+                SATELLITES
+                <span id="satHudCount">0</span>
+            </div>
+
+            <div class="flight-hud-status" id="satHudStatus">--</div>
+
+            <div class="flight-hud-status" id="satHudUpdated"></div>
+
+            <div class="flight-legend" id="satLegend"></div>
+
+        </div>
+
         </div>
 
         <div class="flight-notice" id="flightNotice"></div>
@@ -658,7 +682,7 @@
         </div>
 
         <div>
-            © OPENSTREETMAP | CARTO | ADS-B: <a href="https://adsb.fi" target="_blank" rel="noopener noreferrer">ADSB.FI</a> | TRANSIT: <a href="https://transitous.org/sources/" target="_blank" rel="noopener noreferrer">TRANSITOUS</a>, GPS: TRANSLINK, MBTA, <a href="https://www.transit.land" target="_blank" rel="noopener noreferrer">TRANSITLAND</a>, <a href="https://mobilitydatabase.org" target="_blank" rel="noopener noreferrer">MOBILITY DATABASE</a> | CABLES: <a href="https://www.submarinecablemap.com/" target="_blank" rel="noopener noreferrer">TELEGEOGRAPHY</a> (CC BY-SA 4.0) | AIS: <a href="https://aisstream.io" target="_blank" rel="noopener noreferrer">AISSTREAM.IO</a>, AIS DATA FROM <a href="https://pelyr.com" target="_blank" rel="noopener noreferrer">PELYR (PELYR.COM)</a>, PELYR DATA LICENCE 2.0, <a href="https://vesselapi.com" target="_blank" rel="noopener noreferrer">VESSELAPI</a>, <a href="https://www.digitraffic.fi/en/marine-traffic/" target="_blank" rel="noopener noreferrer">FINTRAFFIC / DIGITRAFFIC.FI</a> (CC BY 4.0)
+            © OPENSTREETMAP | CARTO | ADS-B: <a href="https://adsb.fi" target="_blank" rel="noopener noreferrer">ADSB.FI</a> | TRANSIT: <a href="https://transitous.org/sources/" target="_blank" rel="noopener noreferrer">TRANSITOUS</a>, GPS: TRANSLINK, MBTA, <a href="https://www.transit.land" target="_blank" rel="noopener noreferrer">TRANSITLAND</a>, <a href="https://mobilitydatabase.org" target="_blank" rel="noopener noreferrer">MOBILITY DATABASE</a> | SATELLITES: <a href="https://celestrak.org" target="_blank" rel="noopener noreferrer">CELESTRAK</a> | CABLES: <a href="https://www.submarinecablemap.com/" target="_blank" rel="noopener noreferrer">TELEGEOGRAPHY</a> (CC BY-SA 4.0) | AIS: <a href="https://aisstream.io" target="_blank" rel="noopener noreferrer">AISSTREAM.IO</a>, AIS DATA FROM <a href="https://pelyr.com" target="_blank" rel="noopener noreferrer">PELYR (PELYR.COM)</a>, PELYR DATA LICENCE 2.0, <a href="https://vesselapi.com" target="_blank" rel="noopener noreferrer">VESSELAPI</a>, <a href="https://www.digitraffic.fi/en/marine-traffic/" target="_blank" rel="noopener noreferrer">FINTRAFFIC / DIGITRAFFIC.FI</a> (CC BY 4.0)
         </div>
 
     </footer>
@@ -687,6 +711,11 @@
     <!-- SUBMARINE CABLES (after rail.js, before script.js) -->
 
     <script src="cables.js"></script>
+
+    <!-- SATELLITES: the orbit maths (SGP4) first, then our layer (after cables.js) -->
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/satellite.js/6.0.1/satellite.min.js"></script>
+    <script src="satellites.js"></script>
 
     <!-- MAIN SCRIPT -->
 

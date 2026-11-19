@@ -9,3 +9,4 @@ node_modules/
 .vesselapi_usage.json
 .transit_*
 .cable_cache.json
+.satellite_cache.json

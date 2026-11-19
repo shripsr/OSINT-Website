@@ -159,6 +159,9 @@ function initializeMap() {
             // Clicking a subsea cable opens its popup instead
             if (isCableAtPoint(e.point))
                 return;
+            // Clicking a satellite opens its popup instead
+            if (isSatelliteAtPoint(e.point))
+                return;
             inspectLocation(e.lngLat.lat, e.lngLat.lng);
         });
         // MAP STYLE CHANGE
@@ -179,6 +182,8 @@ function initializeMap() {
         initializeRail();
         // SUBMARINE CABLES (see cables.js)
         initializeCables();
+        // SATELLITES (see satellites.js)
+        initializeSatellites();
     }
     catch (error) {
         console.error(error);
