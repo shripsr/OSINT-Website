@@ -8,3 +8,4 @@ node_modules/
 .ships_cache.json*
 .vesselapi_usage.json
 .transit_*
+.cable_cache.json

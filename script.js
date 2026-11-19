@@ -156,6 +156,9 @@ function initializeMap() {
             // Clicking a train opens its popup instead
             if (isRailAtPoint(e.point))
                 return;
+            // Clicking a subsea cable opens its popup instead
+            if (isCableAtPoint(e.point))
+                return;
             inspectLocation(e.lngLat.lat, e.lngLat.lng);
         });
         // MAP STYLE CHANGE
@@ -174,6 +177,8 @@ function initializeMap() {
         initializeShips();
         // RAIL TRACKING (see rail.js)
         initializeRail();
+        // SUBMARINE CABLES (see cables.js)
+        initializeCables();
     }
     catch (error) {
         console.error(error);

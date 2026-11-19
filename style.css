@@ -1621,3 +1621,20 @@ a.transit-popup-button {
 .watch-row-remove:hover {
     color: var(--red) !important;
 }
+
+
+/* Links inside map popups (subsea cables): the browser's dark blue is
+   unreadable on the dark panel */
+.transit-popup .maplibregl-popup-content a {
+    color: #6fe3f5;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.transit-popup .maplibregl-popup-content a:hover {
+    color: #ffffff;
+}
+
+.transit-popup .maplibregl-popup-content small {
+    color: #a9b8c8;
+}

@@ -2502,6 +2502,77 @@ def get_rail():
     return reply
 
 
+# ----------------------------------------------------------------------
+# SUBMARINE CABLES (TeleGeography, submarinecablemap.com, CC BY-SA 4.0)
+# Their API sends no CORS headers, so the page asks "/api/cables" and
+# "/api/cables/<id>" here. Cable routes barely change: cached for hours.
+# ----------------------------------------------------------------------
+
+CABLE_API = "https://www.submarinecablemap.com/api/v3"
+CABLE_CACHE_SECONDS = 7 * 24 * 3600     # cable routes change rarely: refresh weekly
+CABLE_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cable_cache.json")
+_cable_lock = threading.Lock()
+_cable_cache = {}   # path -> [time fetched, text]; also kept on disk across restarts
+_cable_loaded = False
+
+
+def _cable_load_disk():
+    global _cable_loaded
+    if _cable_loaded:
+        return
+    _cable_loaded = True
+    try:
+        with open(CABLE_CACHE_FILE, "r", encoding="utf-8") as handle:
+            _cable_cache.update(json.load(handle))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def get_cable_data(path):
+    """One TeleGeography JSON file, as (time fetched, text). Cached on disk;
+    if a refresh fails the older copy is still served. `path` is already checked."""
+    with _cable_lock:
+        _cable_load_disk()
+        hit = _cable_cache.get(path)
+    if hit and time.time() - hit[0] < CABLE_CACHE_SECONDS:
+        return hit[0], hit[1]
+    try:
+        request = urllib.request.Request(
+            f"{CABLE_API}/{path}", headers={"User-Agent": "osint-map", "Accept": "application/json"})
+        with urllib.request.urlopen(request, timeout=30) as response:
+            text = response.read().decode("utf-8")
+        json.loads(text)    # refuse to cache an HTML error page
+    except Exception:  # noqa: BLE001
+        if hit:
+            return hit[0], hit[1]
+        raise
+    fetched = time.time()
+    with _cable_lock:
+        _cable_cache[path] = [fetched, text]
+        try:
+            with open(CABLE_CACHE_FILE, "w", encoding="utf-8") as handle:
+                json.dump(_cable_cache, handle)
+        except OSError:
+            pass
+    return fetched, text
+
+
+def get_cable_json(path):
+    """A single cable / landing point, with "fetched" (unix seconds) added."""
+    fetched, text = get_cable_data(path)
+    data = json.loads(text)
+    data["fetched"] = fetched
+    return data
+
+
+def get_cables():
+    """Every cable route + every landing point, in one answer."""
+    t1, cables = get_cable_data("cable/cable-geo.json")
+    t2, landings = get_cable_data("landing-point/landing-point-geo.json")
+    return ('{"fetched":' + str(min(t1, t2)) + ',"cables":' + cables +
+            ',"landings":' + landings + "}")
+
+
 def get_ship_trail(mmsi):
     """Where the relay has seen this ship go since it started listening."""
     with _ships_lock:
@@ -2677,6 +2748,26 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json(200, get_ships(south, west, north, east))
             except Exception as error:  # noqa: BLE001
                 print(f"Ship relay failed ({error})")
+                return self.send_json(502, {"error": str(error)})
+
+        if url.path == "/api/cables":
+            try:
+                return self.send_json(200, get_cables())
+            except Exception as error:  # noqa: BLE001
+                print(f"Cable relay failed ({error})")
+                return self.send_json(502, {"error": str(error)})
+
+        if url.path.startswith("/api/cables/"):
+            cable_id = url.path[len("/api/cables/"):]
+            folder = "cable"
+            if cable_id.startswith("landing/"):     # /api/cables/landing/<id>
+                folder, cable_id = "landing-point", cable_id[len("landing/"):]
+            if not re.fullmatch(r"[a-z0-9_-]{1,120}", cable_id):
+                return self.send_json(400, {"error": "Bad cable id"})
+            try:
+                return self.send_json(200, get_cable_json(f"{folder}/{cable_id}.json"))
+            except Exception as error:  # noqa: BLE001
+                print(f"Cable detail failed ({error})")
                 return self.send_json(502, {"error": str(error)})
 
         if url.path == "/api/rail":
