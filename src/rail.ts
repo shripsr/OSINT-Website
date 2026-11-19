@@ -1,6 +1,6 @@
 /* ==============================================
    OSINT MAP - RAIL TRACKING (live train positions)
-   SOURCE: src/rail.ts  ->  compiled to rail.js by "npm run build"
+   SOURCE: src/rail.ts  ->  compiled to js/rail.js by "npm run build"
            (edit the .ts file, never the .js; rail.js must load
            AFTER ships.js and BEFORE script.js)
    DATA: two open feeds, both free, no API key, asked directly by the browser:

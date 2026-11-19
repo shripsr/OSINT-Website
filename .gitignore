@@ -1,12 +1,9 @@
 # Private keys / account details - never commit these
 .env*
 !.env.example
-config.js
+js/config.js
 opensky-credentials.json
 __pycache__/
 node_modules/
-.ships_cache.json*
-.vesselapi_usage.json
-.transit_*
-.cable_cache.json
-.satellite_cache.json
+# Everything the server saves between runs (never served to the browser)
+cache/

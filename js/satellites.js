@@ -1,7 +1,7 @@
 "use strict";
 /* ==============================================
    OSINT MAP - SATELLITES (live positions, orbit paths and details)
-   SOURCE: src/satellites.ts  ->  compiled to satellites.js by "npm run build"
+   SOURCE: src/satellites.ts  ->  compiled to js/satellites.js by "npm run build"
            (edit the .ts file, never the .js; satellites.js must load
            AFTER cables.js and satellite.js, and BEFORE script.js)
    DATA: CelesTrak (celestrak.org): orbital elements of every active satellite

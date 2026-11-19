@@ -35,6 +35,12 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
+# Everything the server saves between runs lives in cache/ (git-ignored, never
+# served to the browser); downloaded reference data (airports) in data/.
+CACHE_DIR = os.path.join(ROOT, "cache")
+DATA_DIR = os.path.join(ROOT, "data")
+os.makedirs(CACHE_DIR, exist_ok=True)
+os.makedirs(DATA_DIR, exist_ok=True)
 
 
 def load_dotenv(path):
@@ -899,13 +905,13 @@ def get_opensky_track(icao24):
 
 # --------------------------------------------------------------------------
 # Airport list (OurAirports, public domain) for the airport pins.
-# Uses airports.csv next to this file; downloads it once if it isn't there.
+# Uses data/airports.csv; downloads it once if it isn't there.
 # --------------------------------------------------------------------------
 
 AIRPORTS_URL = os.environ.get(
     "AIRPORTS_URL",
     "https://davidmegginson.github.io/ourairports-data/airports.csv")
-AIRPORTS_FILE = os.path.join(ROOT, "airports.csv")
+AIRPORTS_FILE = os.path.join(DATA_DIR, "airports.csv")
 
 _airports_lock = threading.Lock()
 _airports = None            # parsed list once loaded
@@ -1000,7 +1006,7 @@ AISSTREAM_API_KEY = os.environ.get("AISSTREAM_API_KEY", "").strip()
 SHIP_MAX_AGE = 1800         # a position older than this is not shown (seconds)
 SHIP_KEEP = 12 * 3600       # forget a ship (its name, type, ...) not heard from for this long
 SHIP_SAVE_EVERY = 120
-SHIP_CACHE_FILE = os.path.join(ROOT, ".ships_cache.json")   # dotfile: never served, git-ignored
+SHIP_CACHE_FILE = os.path.join(CACHE_DIR, ".ships_cache.json")   # dotfile: never served, git-ignored
 SHIP_REPLY_LIMIT = 6000     # most ships sent to the page at once
 
 SHIP_POSITION_KINDS = ("PositionReport", "StandardClassBPositionReport",
@@ -1541,7 +1547,7 @@ VESSELAPI_MONTHLY_LIMIT = int(os.environ.get("VESSELAPI_MONTHLY_LIMIT") or 140)
 VESSELAPI_MIN_INTERVAL = 300    # seconds between requests
 VESSELAPI_MAX_SPAN = 3.9        # degrees of height + width it accepts (4), with a margin
 VESSELAPI_AFTER = 180           # the others must have been silent this long
-VESSELAPI_USAGE_FILE = os.path.join(ROOT, ".vesselapi_usage.json")
+VESSELAPI_USAGE_FILE = os.path.join(CACHE_DIR, ".vesselapi_usage.json")
 
 _vesselapi = {"busy": False, "next": 0.0, "blocked_until": 0.0, "error": "",
               "ok_at": 0.0, "month": "", "used": 0, "loaded": False}
@@ -1781,7 +1787,7 @@ GPS_STATIC_MAX_BYTES = 300 * 1024 * 1024   # (the Dutch timetable is 275 MB; onl
 GPS_ROUTES_TTL = 7 * 86400
 GPS_DISCOVER_TTL = 7 * 86400
 GPS_DISCOVER_MAX_SPAN = 6.0     # no catalogue lookups for views wider than this (degrees)
-GPS_FEEDS_FILE = os.path.join(ROOT, ".transit_feeds_cache.json")    # dotfiles: never served
+GPS_FEEDS_FILE = os.path.join(CACHE_DIR, ".transit_feeds_cache.json")    # dotfiles: never served
 
 _gps_lock = threading.Lock()
 _gps_feeds = {}             # key -> feed (see add_gps_feed)
@@ -1946,7 +1952,7 @@ def _gps_mode(route_type):
 # ---------- route names (from the operator's timetable download) ----------
 
 def _gps_routes_file(key):
-    return os.path.join(ROOT, ".transit_routes_" + re.sub(r"[^A-Za-z0-9]+", "_", key) + ".json")
+    return os.path.join(CACHE_DIR, ".transit_routes_" + re.sub(r"[^A-Za-z0-9]+", "_", key) + ".json")
 
 
 def load_gps_routes(feed):
@@ -2510,7 +2516,7 @@ def get_rail():
 
 CABLE_API = "https://www.submarinecablemap.com/api/v3"
 CABLE_CACHE_SECONDS = 7 * 24 * 3600     # cable routes change rarely: refresh weekly
-CABLE_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cable_cache.json")
+CABLE_CACHE_FILE = os.path.join(CACHE_DIR, ".cable_cache.json")
 _cable_lock = threading.Lock()
 _cable_cache = {}   # path -> [time fetched, text]; also kept on disk across restarts
 _cable_loaded = False
@@ -2589,7 +2595,7 @@ SAT_GROUP = os.environ.get("SATELLITE_GROUP", "active")
 SAT_FALLBACK_GROUP = os.environ.get("SATELLITE_FALLBACK_GROUP", "visual")
 SAT_CACHE_SECONDS = 3 * 3600
 SAT_RETRY_SECONDS = 15 * 60
-SAT_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".satellite_cache.json")
+SAT_CACHE_FILE = os.path.join(CACHE_DIR, ".satellite_cache.json")
 _sat_lock = threading.Lock()
 _sat = {"time": 0.0, "plain": None, "gzip": None, "group": "", "failed": 0.0, "error": ""}
 _sat_loaded = False
@@ -2709,9 +2715,11 @@ class Handler(SimpleHTTPRequestHandler):
 
     def blocked_static(self):
         """Never serve credential files or dotfiles to the browser."""
-        name = os.path.basename(urllib.parse.unquote(
-            urllib.parse.urlparse(self.path).path)).lower()
-        return "credentials" in name or name.startswith(".")
+        parts = urllib.parse.unquote(
+            urllib.parse.urlparse(self.path).path).lower().split("/")
+        # dotfiles (.env ...), credential files and the whole cache/ folder
+        return any(part.startswith(".") or part == "cache" or "credentials" in part
+                   for part in parts)
 
     def do_HEAD(self):
         if self.blocked_static():

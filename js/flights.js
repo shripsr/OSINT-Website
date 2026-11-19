@@ -1,7 +1,7 @@
 "use strict";
 /* ==============================================
    OSINT MAP - LIVE FLIGHT TRACKING
-   SOURCE: src/flights.ts  ->  compiled to flights.js by "npm run build"
+   SOURCE: src/flights.ts  ->  compiled to js/flights.js by "npm run build"
            (edit the .ts file, never the .js; flights.js must load
            BEFORE script.js)
    DATA: community ADS-B network via adsb.lol

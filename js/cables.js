@@ -1,7 +1,7 @@
 "use strict";
 /* ==============================================
    OSINT MAP - SUBMARINE CABLES (undersea internet cables of the world)
-   SOURCE: src/cables.ts  ->  compiled to cables.js by "npm run build"
+   SOURCE: src/cables.ts  ->  compiled to js/cables.js by "npm run build"
            (edit the .ts file, never the .js; cables.js must load
            AFTER rail.js and BEFORE script.js)
    DATA: TeleGeography's Submarine Cable Map (submarinecablemap.com),

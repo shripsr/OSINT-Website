@@ -7,7 +7,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
     <title>OSINT MAP | Intelligence Platform</title>
-    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
 
     <!-- MapLibre -->
     <link
@@ -16,7 +16,7 @@
     >
 
     <!-- Main stylesheet -->
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="css/style.css">
 </head>
 
 <body>
@@ -694,33 +694,33 @@
 
     <!-- LIVE FLIGHT TRACKING (must load before script.js) -->
 
-    <script src="flights.js"></script>
+    <script src="js/flights.js"></script>
 
     <!-- TRANSIT LINES + LIVE VEHICLES (after flights.js, before script.js) -->
 
-    <script src="transit.js"></script>
+    <script src="js/transit.js"></script>
 
     <!-- SHIP TRACKING (after transit.js, before script.js) -->
 
-    <script src="ships.js"></script>
+    <script src="js/ships.js"></script>
 
     <!-- RAIL TRACKING (after ships.js, before script.js) -->
 
-    <script src="rail.js"></script>
+    <script src="js/rail.js"></script>
 
     <!-- SUBMARINE CABLES (after rail.js, before script.js) -->
 
-    <script src="cables.js"></script>
+    <script src="js/cables.js"></script>
 
     <!-- SATELLITES: the orbit maths (SGP4) first, then our layer (after cables.js) -->
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/satellite.js/6.0.1/satellite.min.js"></script>
-    <script src="satellites.js"></script>
+    <script src="js/satellites.js"></script>
 
     <!-- MAIN SCRIPT -->
 
-    <script src="config.js"></script>
-    <script src="script.js"></script>
+    <script src="js/config.js"></script>
+    <script src="js/script.js"></script>
 
 </body>
 

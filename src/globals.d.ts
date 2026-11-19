@@ -6,7 +6,7 @@ declare const maplibregl: typeof import("maplibre-gl");
 // satellite.js (SGP4 orbit maths, loaded from a CDN in index.html)
 declare const satellite: any;
 
-// config.js (git-ignored): keys the browser needs
+// js/config.js (git-ignored): keys the browser needs
 declare const CONFIG: {
     CARTO_API_KEY: string;
 };

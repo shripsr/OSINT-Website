@@ -1,7 +1,7 @@
 "use strict";
 /* ==============================================
    OSINT MAP - SHIP TRACKING (live AIS positions)
-   SOURCE: src/ships.ts  ->  compiled to ships.js by "npm run build"
+   SOURCE: src/ships.ts  ->  compiled to js/ships.js by "npm run build"
            (edit the .ts file, never the .js; ships.js must load
            AFTER transit.js and BEFORE script.js)
    DATA: two sources, the first one that is available:

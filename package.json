@@ -1,7 +1,7 @@
 {
   "name": "osint-website",
   "private": true,
-  "description": "OSINT map - TypeScript sources in src/, compiled to flights.js and script.js",
+  "description": "OSINT map - TypeScript sources in src/, compiled to js/",
   "scripts": {
     "build": "tsc",
     "watch": "tsc --watch",

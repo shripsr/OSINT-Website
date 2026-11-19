@@ -1,7 +1,7 @@
 "use strict";
 /* ==============================================
    OSINT MAP - PUBLIC TRANSIT (line maps + live vehicles)
-   SOURCE: src/transit.ts  ->  compiled to transit.js by "npm run build"
+   SOURCE: src/transit.ts  ->  compiled to js/transit.js by "npm run build"
            (edit the .ts file, never the .js; transit.js must load
            AFTER flights.js and BEFORE script.js)
    DATA: Transitous (transitous.org), a free community-run service built

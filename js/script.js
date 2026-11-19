@@ -2,7 +2,7 @@
 /* ==============================================
    OSINT MAP
    VERSION 0.3.0
-   SOURCE: src/script.ts  ->  compiled to script.js by "npm run build"
+   SOURCE: src/script.ts  ->  compiled to js/script.js by "npm run build"
            (edit the .ts file, never the .js)
    MAP ENGINE: MAPLIBRE GL JS
    ============================================== */
