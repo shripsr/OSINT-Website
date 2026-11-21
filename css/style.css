@@ -25,11 +25,32 @@
     --red: #e05252;
 }
 
+/* ------------------------------------------
+   UI SCALE
+   Every size in this file is in rem, so the whole interface scales from
+   this one value. 1rem = 16px on a ~1080px-tall viewport (the layout's
+   reference size) and shrinks in proportion on shorter screens - e.g. a
+   16:10 laptop with Windows display scaling - so the same layout fits.
+   Raise the 66 to make the UI smaller overall, lower it to make it bigger.
+   ------------------------------------------ */
+html {
+    font-size: clamp(12px, calc(100vh / 66), 16px);
+    font-size: clamp(12px, calc(100dvh / 66), 16px);
+}
+
 body {
     background: var(--background);
     color: var(--text);
     font-family: Arial, sans-serif;
     overflow: hidden;
+}
+
+/* Form controls don't inherit font size by default */
+button,
+input,
+select,
+textarea {
+    font-size: inherit;
 }
 
 
@@ -38,7 +59,7 @@ body {
    ========================================== */
 
 .topbar {
-    height: 65px;
+    height: 4.0625rem;
 
     background: var(--panel);
     border-bottom: 1px solid var(--border);
@@ -47,14 +68,14 @@ body {
     align-items: center;
     justify-content: space-between;
 
-    padding: 0 22px;
+    padding: 0 1.375rem;
 
     position: relative;
     z-index: 1000;
 }
 
 .logo {
-    font-size: 20px;
+    font-size: 1.25rem;
     font-weight: bold;
     letter-spacing: 2px;
     white-space: nowrap;
@@ -67,23 +88,23 @@ body {
 .logo small {
     display: block;
 
-    font-size: 8px;
+    font-size: 0.5rem;
     color: var(--muted);
 
     letter-spacing: 2px;
-    margin-top: 4px;
+    margin-top: 0.25rem;
 }
 
 .search-container {
     display: flex;
-    width: min(500px, 45vw);
+    width: min(31.25rem, 45vw);
 }
 
 .search-container input {
     flex: 1;
     min-width: 0;
 
-    padding: 11px;
+    padding: 0.6875rem;
 
     background: #202c39;
     border: 1px solid var(--border);
@@ -97,7 +118,7 @@ body {
 }
 
 .search-container button {
-    padding: 0 18px;
+    padding: 0 1.125rem;
 
     background: var(--accent-dark);
     border: none;
@@ -105,7 +126,7 @@ body {
     color: white;
     cursor: pointer;
 
-    font-size: 11px;
+    font-size: 0.6875rem;
     letter-spacing: 1px;
 }
 
@@ -130,10 +151,10 @@ body {
     border: 1px solid var(--accent);
     border-top: none;
     
-    max-height: 250px;
+    max-height: 15.625rem;
     overflow-y: auto;
     z-index: 2000;
-    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 0.625rem 1.5625rem rgba(0, 0, 0, 0.5);
 }
 
 .search-suggestions.active {
@@ -141,8 +162,8 @@ body {
 }
 
 .suggestion-item {
-    padding: 12px;
-    font-size: 11px;
+    padding: 0.75rem;
+    font-size: 0.6875rem;
     color: var(--text);
     border-bottom: 1px solid var(--border);
     cursor: pointer;
@@ -163,7 +184,7 @@ body {
 }
 
 .system-status {
-    font-size: 11px;
+    font-size: 0.6875rem;
     color: var(--green);
     letter-spacing: 1px;
     white-space: nowrap;
@@ -172,13 +193,13 @@ body {
 .status-dot {
     display: inline-block;
 
-    width: 7px;
-    height: 7px;
+    width: 0.4375rem;
+    height: 0.4375rem;
 
     background: var(--green);
     border-radius: 50%;
 
-    margin-right: 7px;
+    margin-right: 0.4375rem;
 }
 
 
@@ -189,44 +210,58 @@ body {
 .sidebar {
     position: absolute;
 
-    top: 65px;
-    bottom: 35px;
+    top: 4.0625rem;
+    bottom: 2.1875rem;
     left: 0;
 
-    width: 230px;
+    width: 14.375rem;
 
     background: var(--panel);
     border-right: 1px solid var(--border);
 
-    padding: 20px 12px;
+    padding: 1.25rem 0.75rem;
+
+    /* Column layout so the version block sits at the bottom when there's
+       room, and the sidebar scrolls instead of clipping when there isn't */
+    display: flex;
+    flex-direction: column;
+
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
 
     z-index: 500;
 }
 
+.sidebar > * {
+    flex-shrink: 0;
+}
+
 .section-title {
-    font-size: 10px;
+    font-size: 0.625rem;
 
     color: var(--muted);
     letter-spacing: 1.5px;
 
-    margin: 18px 10px 10px;
+    margin: 1.125rem 0.625rem 0.625rem;
 }
 
 .menu-item {
     display: flex;
     align-items: center;
 
-    padding: 12px;
+    padding: 0.75rem;
 
-    font-size: 13px;
+    font-size: 0.8125rem;
     color: #aab8c8;
 
     cursor: pointer;
-    border-radius: 4px;
+    border-radius: 0.25rem;
 }
 
 .menu-item > span:first-child {
-    margin-right: 10px;
+    margin-right: 0.625rem;
     color: var(--accent);
 }
 
@@ -239,13 +274,13 @@ body {
 .item-count {
     margin-left: auto;
     color: var(--muted);
-    font-size: 11px;
+    font-size: 0.6875rem;
 }
 
 .layer-select {
     width: 100%;
 
-    padding: 11px;
+    padding: 0.6875rem;
 
     background: #202c39;
     color: var(--text);
@@ -261,29 +296,27 @@ body {
 }
 
 .sidebar-info {
-    padding: 10px;
+    padding: 0.625rem;
 
     border-bottom: 1px solid #25313e;
 }
 
 .sidebar-info div {
     color: var(--muted);
-    font-size: 9px;
-    margin-bottom: 5px;
+    font-size: 0.5625rem;
+    margin-bottom: 0.3125rem;
 }
 
 .sidebar-info span {
     font-family: monospace;
-    font-size: 13px;
+    font-size: 0.8125rem;
 }
 
 .sidebar-bottom {
-    position: absolute;
+    margin-top: auto;
+    padding: 1.125rem 0.5rem 0;
 
-    bottom: 18px;
-    left: 20px;
-
-    font-size: 10px;
+    font-size: 0.625rem;
     letter-spacing: 1px;
 }
 
@@ -291,9 +324,9 @@ body {
     display: block;
 
     color: var(--muted);
-    margin-top: 5px;
+    margin-top: 0.3125rem;
 
-    font-size: 9px;
+    font-size: 0.5625rem;
 }
 
 
@@ -304,10 +337,10 @@ body {
 .main-content {
     position: absolute;
 
-    top: 65px;
-    left: 230px;
+    top: 4.0625rem;
+    left: 14.375rem;
     right: 0;
-    bottom: 35px;
+    bottom: 2.1875rem;
 
     background: #101820;
 }
@@ -328,7 +361,7 @@ body {
     background: var(--panel) !important;
     border: 1px solid var(--border) !important;
 
-    box-shadow: 0 2px 8px #0005 !important;
+    box-shadow: 0 2px 0.5rem #0005 !important;
 }
 
 .maplibregl-ctrl-group button {
@@ -376,17 +409,17 @@ body {
     justify-content: center;
     align-items: center;
 
-    gap: 15px;
+    gap: 0.9375rem;
 
     z-index: 600;
 
-    font-size: 12px;
+    font-size: 0.75rem;
     letter-spacing: 2px;
 }
 
 .map-loading small {
     color: var(--muted);
-    font-size: 9px;
+    font-size: 0.5625rem;
 }
 
 .map-loading.hidden {
@@ -394,8 +427,8 @@ body {
 }
 
 .loader {
-    width: 32px;
-    height: 32px;
+    width: 2rem;
+    height: 2rem;
 
     border: 2px solid #263544;
     border-top-color: var(--accent);
@@ -421,11 +454,11 @@ body {
 
     position: absolute;
 
-    left: 20px;
-    top: 20px;
+    left: 1.25rem;
+    top: 1.25rem;
 
-    width: 280px;
-    max-height: calc(100% - 40px);
+    width: 17.5rem;
+    max-height: calc(100% - 2.5rem);
 
     overflow-y: auto;
 
@@ -434,7 +467,7 @@ body {
 
     z-index: 800;
 
-    box-shadow: 0 5px 20px #0008;
+    box-shadow: 0 0.3125rem 1.25rem #0008;
 }
 
 .inspection-panel.visible {
@@ -443,15 +476,15 @@ body {
 
 /* Flight details also sit on the left: put the location panel beside them */
 body:has(#flightPanel.visible) .inspection-panel {
-    left: 300px;
+    left: 18.75rem;
 }
 
 .panel-header {
-    padding: 14px;
+    padding: 0.875rem;
 
     border-bottom: 1px solid var(--border);
 
-    font-size: 11px;
+    font-size: 0.6875rem;
     letter-spacing: 1px;
 
     color: var(--accent);
@@ -466,37 +499,37 @@ body:has(#flightPanel.visible) .inspection-panel {
     border: none;
 
     color: var(--text);
-    font-size: 22px;
+    font-size: 1.375rem;
 
     cursor: pointer;
 }
 
 .panel-content {
-    padding: 15px;
+    padding: 0.9375rem;
 }
 
 .data-label {
     color: var(--muted);
 
-    font-size: 9px;
+    font-size: 0.5625rem;
     letter-spacing: 1px;
 
-    margin-top: 15px;
+    margin-top: 0.9375rem;
 }
 
 .data-value {
     font-family: monospace;
-    font-size: 13px;
+    font-size: 0.8125rem;
 
-    margin-top: 6px;
+    margin-top: 0.375rem;
     word-break: break-word;
 }
 
 .panel-input {
     width: 100%;
 
-    margin-top: 7px;
-    padding: 10px;
+    margin-top: 0.4375rem;
+    padding: 0.625rem;
 
     background: #202c39;
     color: white;
@@ -505,7 +538,7 @@ body:has(#flightPanel.visible) .inspection-panel {
     outline: none;
 
     font-family: Arial, sans-serif;
-    font-size: 12px;
+    font-size: 0.75rem;
 }
 
 .panel-input:focus {
@@ -513,7 +546,7 @@ body:has(#flightPanel.visible) .inspection-panel {
 }
 
 .description-input {
-    min-height: 85px;
+    min-height: 5.3125rem;
     resize: vertical;
 }
 
@@ -534,7 +567,7 @@ body:has(#flightPanel.visible) .inspection-panel {
     outline: none;
 
     font-family: monospace;
-    font-size: 18px;
+    font-size: 1.125rem;
     font-weight: bold;
     letter-spacing: 0.5px;
     line-height: 1.3;
@@ -572,15 +605,15 @@ body:has(#flightPanel.visible) .inspection-panel {
 .danger-button {
     width: 100%;
 
-    margin-top: 15px;
-    padding: 11px;
+    margin-top: 0.9375rem;
+    padding: 0.6875rem;
 
     border: none;
 
     color: white;
     cursor: pointer;
 
-    font-size: 10px;
+    font-size: 0.625rem;
     letter-spacing: 1px;
 }
 
@@ -619,7 +652,7 @@ body:has(#flightPanel.visible) .inspection-panel {
     align-items: center;
     flex-direction: column;
 
-    gap: 15px;
+    gap: 0.9375rem;
 }
 
 .map-error.visible {
@@ -628,19 +661,19 @@ body:has(#flightPanel.visible) .inspection-panel {
 
 .map-error strong {
     color: var(--red);
-    font-size: 14px;
+    font-size: 0.875rem;
     letter-spacing: 2px;
 }
 
 .map-error p {
     color: var(--muted);
-    font-size: 12px;
+    font-size: 0.75rem;
     max-width: 80%;
     text-align: center;
 }
 
 .map-error button {
-    padding: 10px 20px;
+    padding: 0.625rem 1.25rem;
 
     background: var(--accent-dark);
     color: white;
@@ -659,7 +692,7 @@ body:has(#flightPanel.visible) .inspection-panel {
     bottom: 0;
 
     width: 100%;
-    height: 35px;
+    min-height: 2.1875rem;
 
     background: var(--panel);
     border-top: 1px solid var(--border);
@@ -668,12 +701,40 @@ body:has(#flightPanel.visible) .inspection-panel {
     justify-content: space-between;
     align-items: center;
 
-    padding: 0 15px;
+    padding: 0 0.9375rem;
 
-    font-size: 10px;
+    gap: 1.25rem;
+
+    font-size: 0.625rem;
     color: var(--muted);
 
+    white-space: nowrap;
+
     z-index: 1000;
+}
+
+.footer > div {
+    flex-shrink: 0;
+}
+
+/* The long data-source credits take whatever space is left and cut off
+   with "..." instead of pushing past the edge */
+.footer > div:last-child {
+    flex: 1 1 auto;
+    min-width: 0;
+
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: right;
+}
+
+/* Hovering the footer wraps the credits so they can all be read; the
+   footer grows upward over the map and shrinks back afterwards */
+.footer:hover > div:last-child {
+    padding: 0.5rem 0;
+
+    white-space: normal;
+    line-height: 1.5;
 }
 
 
@@ -684,15 +745,15 @@ body:has(#flightPanel.visible) .inspection-panel {
 @media (max-width: 700px) {
 
     .sidebar {
-        width: 170px;
+        width: 10.625rem;
     }
 
     .main-content {
-        left: 170px;
+        left: 10.625rem;
     }
 
     .logo {
-        font-size: 15px;
+        font-size: 0.9375rem;
     }
 
     .logo small {
@@ -708,40 +769,40 @@ body:has(#flightPanel.visible) .inspection-panel {
     }
 
     .footer {
-        font-size: 8px;
+        font-size: 0.5rem;
     }
 
     .inspection-panel {
-        width: 240px;
-        left: 8px;
-        top: 8px;
+        width: 15rem;
+        left: 0.5rem;
+        top: 0.5rem;
     }
 
     /* No room for two panels side by side: go to the right edge instead */
     body:has(#flightPanel.visible) .inspection-panel {
         left: auto;
-        right: 8px;
+        right: 0.5rem;
     }
 }
 
 @media (max-width: 450px) {
 
     .sidebar {
-        width: 135px;
-        padding: 10px 5px;
+        width: 8.4375rem;
+        padding: 0.625rem 0.3125rem;
     }
 
     .main-content {
-        left: 135px;
+        left: 8.4375rem;
     }
 
     .section-title {
-        font-size: 8px;
+        font-size: 0.5rem;
     }
 
     .menu-item {
-        font-size: 11px;
-        padding: 10px 5px;
+        font-size: 0.6875rem;
+        padding: 0.625rem 0.3125rem;
     }
 
     .logo {
@@ -753,19 +814,19 @@ body:has(#flightPanel.visible) .inspection-panel {
 
 .projection-controls {
     position: absolute;
-    top: 20px;
-    right: 20px;
+    top: 1.25rem;
+    right: 1.25rem;
     z-index: 10;
 
     display: flex;
-    gap: 5px;
+    gap: 0.3125rem;
 
-    padding: 5px;
+    padding: 0.3125rem;
     background: rgba(10, 15, 22, 0.95);
     border: 1px solid #263746;
-    border-radius: 5px;
+    border-radius: 0.3125rem;
 
-    backdrop-filter: blur(10px);
+    backdrop-filter: blur(0.625rem);
 }
 
 .projection-button {
@@ -773,10 +834,10 @@ body:has(#flightPanel.visible) .inspection-panel {
     border: 1px solid transparent;
 
     color: #8495a5;
-    padding: 10px 15px;
+    padding: 0.625rem 0.9375rem;
 
     font-family: inherit;
-    font-size: 11px;
+    font-size: 0.6875rem;
     font-weight: bold;
     letter-spacing: 1px;
 
@@ -817,11 +878,11 @@ body:has(#flightPanel.visible) .inspection-panel {
 
     position: absolute;
 
-    left: 20px;
-    top: 20px;
+    left: 1.25rem;
+    top: 1.25rem;
 
-    width: 270px;
-    max-height: calc(100% - 40px);
+    width: 16.875rem;
+    max-height: calc(100% - 2.5rem);
 
     overflow-y: auto;
 
@@ -830,7 +891,7 @@ body:has(#flightPanel.visible) .inspection-panel {
 
     z-index: 800;
 
-    box-shadow: 0 5px 20px #0008;
+    box-shadow: 0 0.3125rem 1.25rem #0008;
 }
 
 .flight-panel.visible {
@@ -839,7 +900,7 @@ body:has(#flightPanel.visible) .inspection-panel {
 
 .flight-callsign {
     font-family: monospace;
-    font-size: 24px;
+    font-size: 1.5rem;
     font-weight: bold;
     letter-spacing: 1px;
 
@@ -849,28 +910,28 @@ body:has(#flightPanel.visible) .inspection-panel {
 }
 
 .flight-subtitle {
-    margin-top: 5px;
+    margin-top: 0.3125rem;
 
-    font-size: 11px;
+    font-size: 0.6875rem;
     color: var(--muted);
 }
 
 .flight-badges {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 0.375rem;
 }
 
 .flight-badges:not(:empty) {
-    margin-top: 10px;
+    margin-top: 0.625rem;
 }
 
 .flight-badge {
-    padding: 3px 7px;
+    padding: 3px 0.4375rem;
 
     border: 1px solid var(--border);
 
-    font-size: 9px;
+    font-size: 0.5625rem;
     letter-spacing: 1px;
 }
 
@@ -892,7 +953,7 @@ body:has(#flightPanel.visible) .inspection-panel {
 .flight-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    column-gap: 12px;
+    column-gap: 0.75rem;
 }
 
 .flight-cell {
@@ -908,8 +969,8 @@ body:has(#flightPanel.visible) .inspection-panel {
 
     width: 100%;
 
-    margin-top: 10px;
-    padding: 11px;
+    margin-top: 0.625rem;
+    padding: 0.6875rem;
 
     background: transparent;
     border: 1px solid var(--border);
@@ -918,7 +979,7 @@ body:has(#flightPanel.visible) .inspection-panel {
     cursor: pointer;
 
     font-family: inherit;
-    font-size: 10px;
+    font-size: 0.625rem;
     letter-spacing: 1px;
 
     text-align: center;
@@ -940,13 +1001,13 @@ body:has(#flightPanel.visible) .inspection-panel {
 .hud-stack {
     position: absolute;
 
-    left: 10px;
-    bottom: 48px;
+    left: 0.625rem;
+    bottom: 3rem;
 
     display: flex;
     flex-direction: column-reverse;
     align-items: flex-start;
-    gap: 8px;
+    gap: 0.5rem;
 
     z-index: 700;
     pointer-events: none;
@@ -961,14 +1022,14 @@ body:has(#flightPanel.visible) .inspection-panel {
 
     position: relative;
 
-    padding: 10px 12px;
+    padding: 0.625rem 0.75rem;
 
     background: #131b25ee;
     border: 1px solid var(--border);
 
     z-index: 700;
 
-    font-size: 10px;
+    font-size: 0.625rem;
     letter-spacing: 1px;
 }
 
@@ -981,39 +1042,39 @@ body:has(#flightPanel.visible) .inspection-panel {
 }
 
 .flight-hud-title span {
-    margin-left: 6px;
+    margin-left: 0.375rem;
 
     color: var(--text);
     font-family: monospace;
-    font-size: 12px;
+    font-size: 0.75rem;
 }
 
 .flight-hud-status {
-    margin-top: 4px;
+    margin-top: 0.25rem;
 
-    max-width: 230px;
+    max-width: 14.375rem;
     word-break: break-word;
 
     color: var(--muted);
-    font-size: 9px;
+    font-size: 0.5625rem;
 }
 
 .flight-legend {
     display: flex;
     flex-wrap: wrap;
-    gap: 5px 10px;
+    gap: 0.3125rem 0.625rem;
 
-    max-width: 230px;
-    margin-top: 9px;
+    max-width: 14.375rem;
+    margin-top: 0.5625rem;
 
     color: var(--muted);
-    font-size: 9px;
+    font-size: 0.5625rem;
 }
 
 .flight-legend span {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
+    gap: 0.3125rem;
 }
 
 .flight-alt-scale {
@@ -1021,13 +1082,13 @@ body:has(#flightPanel.visible) .inspection-panel {
 }
 
 .flight-alt-title {
-    margin-bottom: 4px;
-    font-size: 8px;
+    margin-bottom: 0.25rem;
+    font-size: 0.5rem;
     letter-spacing: 0.6px;
 }
 
 .flight-alt-bar {
-    height: 6px;
+    height: 0.375rem;
     border-radius: 3px;
 }
 
@@ -1035,14 +1096,14 @@ body:has(#flightPanel.visible) .inspection-panel {
     display: flex;
     justify-content: space-between;
     margin-top: 2px;
-    font-size: 8px;
+    font-size: 0.5rem;
 }
 
 .flight-legend i {
     display: inline-block;
 
-    width: 8px;
-    height: 8px;
+    width: 0.5rem;
+    height: 0.5rem;
 
     border-radius: 50%;
 }
@@ -1063,8 +1124,8 @@ body:has(#flightPanel.visible) .inspection-panel {
     display: block;
 
     width: 100%;
-    max-height: 150px;
-    margin-bottom: 8px;
+    max-height: 9.375rem;
+    margin-bottom: 0.5rem;
 
     object-fit: cover;
     border-radius: 2px;
@@ -1079,11 +1140,11 @@ body:has(#flightPanel.visible) .inspection-panel {
     position: absolute;
 
     left: 50%;
-    bottom: 20px;
+    bottom: 1.25rem;
 
     transform: translateX(-50%);
 
-    padding: 9px 16px;
+    padding: 0.5625rem 1rem;
 
     background: var(--panel);
     border: 1px solid var(--accent);
@@ -1091,7 +1152,7 @@ body:has(#flightPanel.visible) .inspection-panel {
     z-index: 700;
 
     color: var(--accent);
-    font-size: 11px;
+    font-size: 0.6875rem;
     letter-spacing: 1px;
     white-space: nowrap;
 }
@@ -1104,7 +1165,7 @@ body:has(#flightPanel.visible) .inspection-panel {
 /* Hover tooltip */
 
 .flight-popup .maplibregl-popup-content {
-    padding: 6px 10px;
+    padding: 0.375rem 0.625rem;
 
     background: var(--panel);
     border: 1px solid var(--accent);
@@ -1112,9 +1173,9 @@ body:has(#flightPanel.visible) .inspection-panel {
 
     color: var(--text);
     font-family: monospace;
-    font-size: 11px;
+    font-size: 0.6875rem;
 
-    box-shadow: 0 4px 14px #0009;
+    box-shadow: 0 0.25rem 0.875rem #0009;
 
     pointer-events: none;
 }
@@ -1127,7 +1188,7 @@ body:has(#flightPanel.visible) .inspection-panel {
 /* Transit vehicle popup (opened by clicking a vehicle) */
 
 .transit-popup .maplibregl-popup-content {
-    padding: 10px 26px 10px 12px;
+    padding: 0.625rem 1.625rem 0.625rem 0.75rem;
 
     background: var(--panel);
     border: 1px solid var(--accent);
@@ -1135,14 +1196,14 @@ body:has(#flightPanel.visible) .inspection-panel {
 
     color: var(--text);
     font-family: monospace;
-    font-size: 11px;
+    font-size: 0.6875rem;
     line-height: 1.6;
 
-    box-shadow: 0 4px 14px #0009;
+    box-shadow: 0 0.25rem 0.875rem #0009;
 }
 
 .transit-popup .maplibregl-popup-content strong {
-    font-size: 13px;
+    font-size: 0.8125rem;
 }
 
 .transit-popup .maplibregl-popup-content small {
@@ -1155,18 +1216,18 @@ body:has(#flightPanel.visible) .inspection-panel {
 
 .transit-popup .maplibregl-popup-close-button {
     color: var(--text);
-    font-size: 16px;
+    font-size: 1rem;
 }
 
 .transit-popup-mode {
-    margin-left: 4px;
+    margin-left: 0.25rem;
     opacity: 0.6;
 }
 
 /* Station board (reuses the airport panel's rows) */
 
 .station-name {
-    font-size: 18px;
+    font-size: 1.125rem;
     line-height: 1.25;
     overflow-wrap: anywhere;
 }
@@ -1179,8 +1240,8 @@ body:has(#flightPanel.visible) .inspection-panel {
 .transit-popup-button {
     display: block;
 
-    margin-top: 8px;
-    padding: 6px 10px;
+    margin-top: 0.5rem;
+    padding: 0.375rem 0.625rem;
 
     background: transparent;
     border: 1px solid var(--border);
@@ -1189,7 +1250,7 @@ body:has(#flightPanel.visible) .inspection-panel {
     cursor: pointer;
 
     font-family: inherit;
-    font-size: 10px;
+    font-size: 0.625rem;
     letter-spacing: 1px;
 }
 
@@ -1217,13 +1278,13 @@ a.transit-popup-button {
 @media (max-width: 700px) {
 
     .flight-panel {
-        width: 230px;
-        left: 8px;
-        top: 8px;
+        width: 14.375rem;
+        left: 0.5rem;
+        top: 0.5rem;
     }
 
     .flight-notice {
-        font-size: 9px;
+        font-size: 0.5625rem;
     }
 
 }
@@ -1245,28 +1306,28 @@ a.transit-popup-button {
 
     width: 100%;
     height: auto;
-    max-height: 190px;
+    max-height: 11.875rem;
 
     object-fit: cover;
 }
 
 .flight-photo-empty {
-    height: 100px;
+    height: 6.25rem;
 
     display: flex;
     align-items: center;
     justify-content: center;
 
     color: var(--muted);
-    font-size: 10px;
+    font-size: 0.625rem;
     letter-spacing: 1px;
 }
 
 .flight-photo-credit {
-    padding: 6px 12px;
+    padding: 0.375rem 0.75rem;
 
     color: var(--muted);
-    font-size: 9px;
+    font-size: 0.5625rem;
     letter-spacing: 0.5px;
 }
 
@@ -1283,19 +1344,19 @@ a.transit-popup-button {
 /* Origin / destination block in the flight panel */
 
 .flight-route {
-    margin: 4px 0 12px;
-    padding: 10px 12px;
+    margin: 0.25rem 0 0.75rem;
+    padding: 0.625rem 0.75rem;
 
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 6px;
+    border-radius: 0.375rem;
 }
 
 .flight-route-ends {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    gap: 0.5rem;
 }
 
 .flight-route-end {
@@ -1308,7 +1369,7 @@ a.transit-popup-button {
 }
 
 .flight-route-code {
-    font-size: 20px;
+    font-size: 1.25rem;
     font-weight: 700;
     letter-spacing: 1px;
 }
@@ -1319,18 +1380,18 @@ a.transit-popup-button {
     white-space: nowrap;
 
     color: var(--muted);
-    font-size: 9px;
+    font-size: 0.5625rem;
 }
 
 .flight-route-plane {
     color: var(--muted);
-    font-size: 14px;
+    font-size: 0.875rem;
     transform: rotate(90deg);
 }
 
 .flight-route-track {
     height: 3px;
-    margin: 8px 0 6px;
+    margin: 0.5rem 0 0.375rem;
 
     background: rgba(255, 255, 255, 0.12);
     border-radius: 2px;
@@ -1347,14 +1408,14 @@ a.transit-popup-button {
 
 .flight-route-info {
     color: var(--muted);
-    font-size: 10px;
+    font-size: 0.625rem;
 }
 
 .flight-trail-note {
-    margin: 0 0 8px;
+    margin: 0 0 0.5rem;
 
     color: var(--muted);
-    font-size: 9px;
+    font-size: 0.5625rem;
 }
 
 .flight-trail-note:empty {
@@ -1366,19 +1427,19 @@ a.transit-popup-button {
 
 .airport-tabs {
     display: flex;
-    gap: 6px;
-    margin: 14px 0 8px;
+    gap: 0.375rem;
+    margin: 0.875rem 0 0.5rem;
 }
 
 .airport-tab {
     flex: 1;
-    padding: 7px 4px;
+    padding: 0.4375rem 0.25rem;
 
     background: transparent;
     color: var(--muted);
 
     border: 1px solid var(--border);
-    font-size: 10px;
+    font-size: 0.625rem;
     letter-spacing: 0.5px;
     cursor: pointer;
 }
@@ -1391,20 +1452,20 @@ a.transit-popup-button {
 .airport-list {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 0.25rem;
 }
 
 .airport-row {
     display: block;
     width: 100%;
-    padding: 7px 9px;
+    padding: 0.4375rem 0.5625rem;
 
     text-align: left;
     background: rgba(255, 255, 255, 0.04);
     color: inherit;
 
     border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 4px;
+    border-radius: 0.25rem;
     cursor: pointer;
 }
 
@@ -1418,35 +1479,35 @@ a.transit-popup-button {
 
 .airport-row-main {
     font-family: monospace;
-    font-size: 12px;
+    font-size: 0.75rem;
     font-weight: bold;
 }
 
 .airport-row-detail {
     margin-top: 2px;
     color: var(--muted);
-    font-size: 10px;
+    font-size: 0.625rem;
 }
 
 .airport-empty {
-    padding: 10px 2px;
+    padding: 0.625rem 2px;
 
     color: var(--muted);
-    font-size: 11px;
+    font-size: 0.6875rem;
 }
 
 .airport-note {
-    margin-top: 10px;
+    margin-top: 0.625rem;
 
     color: var(--muted);
-    font-size: 9px;
+    font-size: 0.5625rem;
     line-height: 1.4;
 }
 
 .airport-address {
-    margin-top: 4px;
+    margin-top: 0.25rem;
 
-    font-size: 10px;
+    font-size: 0.625rem;
     line-height: 1.4;
 }
 
@@ -1457,12 +1518,12 @@ a.transit-popup-button {
 /* Scheduled flights (AirLabs timetable) */
 
 .airport-section-title {
-    margin: 18px 0 8px;
-    padding-top: 12px;
+    margin: 1.125rem 0 0.5rem;
+    padding-top: 0.75rem;
 
     border-top: 1px solid var(--border);
     color: var(--accent);
-    font-size: 10px;
+    font-size: 0.625rem;
     letter-spacing: 0.5px;
 }
 
@@ -1510,13 +1571,13 @@ a.transit-popup-button {
 
 .watch-add {
     display: flex;
-    gap: 6px;
+    gap: 0.375rem;
 }
 
 .watch-add input {
     flex: 1;
     min-width: 0;
-    padding: 9px;
+    padding: 0.5625rem;
 
     background: #202c39;
     color: var(--text);
@@ -1525,7 +1586,7 @@ a.transit-popup-button {
     outline: none;
 
     font-family: monospace;
-    font-size: 12px;
+    font-size: 0.75rem;
     text-transform: uppercase;
 }
 
@@ -1534,7 +1595,7 @@ a.transit-popup-button {
 }
 
 .watch-add button {
-    padding: 0 12px;
+    padding: 0 0.75rem;
 
     background: var(--accent-dark);
     color: white;
@@ -1542,7 +1603,7 @@ a.transit-popup-button {
     border: none;
     cursor: pointer;
 
-    font-size: 10px;
+    font-size: 0.625rem;
     letter-spacing: 1px;
 }
 
@@ -1552,10 +1613,10 @@ a.transit-popup-button {
 
 .watch-hint,
 .watch-note {
-    margin: 8px 0;
+    margin: 0.5rem 0;
 
     color: var(--muted);
-    font-size: 10px;
+    font-size: 0.625rem;
     line-height: 1.4;
 }
 
@@ -1565,7 +1626,7 @@ a.transit-popup-button {
 
 .watch-note {
     margin-bottom: 0;
-    font-size: 9px;
+    font-size: 0.5625rem;
 }
 
 .watch-row {
@@ -1574,7 +1635,7 @@ a.transit-popup-button {
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-left: 3px solid var(--border);
-    border-radius: 4px;
+    border-radius: 0.25rem;
 }
 
 .watch-row:hover {
@@ -1606,16 +1667,16 @@ a.transit-popup-button {
 .watch-row-main {
     flex: 1;
     min-width: 0;
-    padding: 7px 9px;
+    padding: 0.4375rem 0.5625rem;
 
     text-align: left;
 }
 
 .watch-row-remove {
-    padding: 0 10px;
+    padding: 0 0.625rem;
 
     color: var(--muted) !important;
-    font-size: 16px;
+    font-size: 1rem;
 }
 
 .watch-row-remove:hover {
@@ -1653,7 +1714,7 @@ a.transit-popup-button {
 
 .sat-legend-count {
     margin-left: auto;
-    padding-left: 10px;
+    padding-left: 0.625rem;
     font-weight: normal;
     color: #a9b8c8;
 }
@@ -1669,9 +1730,9 @@ a.transit-popup-button {
 
 .transit-popup .sat-heading {
     display: inline-block;
-    margin-top: 6px;
+    margin-top: 0.375rem;
     color: #6fe3f5;
-    font-size: 10px;
+    font-size: 0.625rem;
     letter-spacing: 1.5px;
 }
 
@@ -1681,15 +1742,15 @@ a.transit-popup-button {
 
 /* Satellite legend swatches: a tilted panel-and-body shape, a square for stations */
 .sat-hud .flight-legend i.sat-dot {
-    width: 11px;
-    height: 5px;
+    width: 0.6875rem;
+    height: 0.3125rem;
     border-radius: 1px;
     transform: rotate(-45deg);
 }
 
 .sat-hud .flight-legend i.sat-dot-station {
-    width: 10px;
-    height: 10px;
+    width: 0.625rem;
+    height: 0.625rem;
     border-radius: 1px;
     box-shadow: inset 0 0 0 2px #0b1520;
 }
