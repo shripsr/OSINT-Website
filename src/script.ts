@@ -169,7 +169,8 @@ function initializeMap(): void {
 
             maxZoom: 19,
 
-            // (attribution control: left out, so MapLibre adds its default one)
+            // Added below instead, so it can sit above the scale bar
+            attributionControl: false,
 
             renderWorldCopies: true,
 
@@ -180,12 +181,15 @@ function initializeMap(): void {
         });
 
 
-        // NAVIGATION CONTROLS
+        // BOTTOM-RIGHT CONTROLS. MapLibre puts each newer bottom control
+        // before the older ones, so this order gives: zoom / compass buttons
+        // on top, then the scale bar with the map credits ("i") to its left
+        // (style.css lets the credits share the scale bar's line).
+
+        // MAP CREDITS (the same control MapLibre would add by default)
 
         map.addControl(
-            new maplibregl.NavigationControl({
-                visualizePitch: true
-            }),
+            new maplibregl.AttributionControl(),
             "bottom-right"
         );
 
@@ -197,7 +201,17 @@ function initializeMap(): void {
                 maxWidth: 150,
                 unit: "metric"
             }),
-            "bottom-left"
+            "bottom-right"
+        );
+
+
+        // NAVIGATION CONTROLS
+
+        map.addControl(
+            new maplibregl.NavigationControl({
+                visualizePitch: true
+            }),
+            "bottom-right"
         );
 
 
@@ -261,6 +275,12 @@ function initializeMap(): void {
             // Clicking a satellite opens its popup instead
             if (isSatelliteAtPoint(e.point)) return;
 
+            // Clicking a replayed aircraft or ship shows its details instead
+            if (isPlaybackAtPoint(e.point)) return;
+
+            // Clicking a dark-ship / ship-meeting marker shows its details instead
+            if (isShipActivityAtPoint(e.point)) return;
+
             inspectLocation(
                 e.lngLat.lat,
                 e.lngLat.lng
@@ -311,6 +331,11 @@ function initializeMap(): void {
         // SATELLITES (see satellites.js)
 
         initializeSatellites();
+
+
+        // PLAYBACK, FLIGHT PATTERNS, GPS JAMMING (see analysis.js)
+
+        initializeAnalysis();
 
     }
 
@@ -1329,6 +1354,107 @@ $("locateButton").addEventListener("click", function() {
     searchLocation();
 
 });
+
+
+// ==============================================
+// 21b. LEGENDS VS. LEFT-SIDE PANELS
+// The legends (bottom left) move to the right of an open left-side panel
+// only if the two would actually overlap, i.e. the panel reaches down to
+// the legends. Short panels (an unnamed location) leave them where they are.
+// ==============================================
+
+const HUD_GAP = 12;     // px between a panel and the legends
+
+let hudLayoutQueued = false;
+
+function layoutHudStack(): void {
+
+    hudLayoutQueued = false;
+
+    const hud = document.querySelector<HTMLElement>(".hud-stack");
+    const main = document.querySelector<HTMLElement>(".main-content");
+
+    if (!hud || !main) return;
+
+    // Where the legends sit when not moved: left 0.625rem (style.css).
+    // Worked out rather than measured, as they may be sliding right now.
+    const rootPx = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    const homeLeft = 0.625 * rootPx;
+
+    const hudTop = hud.offsetTop;
+    const hudBottom = hudTop + hud.offsetHeight;
+    const hudWidth = hud.offsetWidth;
+
+    const place = (left: string, hidden: boolean) => {
+        if (hud.style.left !== left) hud.style.left = left;
+        if (hud.classList.contains("hud-hidden") !== hidden) hud.classList.toggle("hud-hidden", hidden);
+    };
+
+    if (!hud.offsetHeight) {            // no legend showing
+        place("", false);
+        return;
+    }
+
+    let shiftTo = 0;
+
+    main.querySelectorAll<HTMLElement>(".flight-panel.visible, .inspection-panel.visible").forEach(function(panel) {
+
+        const top = panel.offsetTop;
+        const bottom = top + panel.offsetHeight;
+        const left = panel.offsetLeft;
+        const right = left + panel.offsetWidth;
+
+        const overlapsVertically = bottom + HUD_GAP > hudTop && top < hudBottom;
+        const overlapsHorizontally = left < homeLeft + hudWidth + HUD_GAP && right + HUD_GAP > homeLeft;
+
+        if (overlapsVertically && overlapsHorizontally) shiftTo = Math.max(shiftTo, right + HUD_GAP);
+    });
+
+    if (!shiftTo) {
+        place("", false);
+        return;
+    }
+
+    // No room beside the panel (narrow window): hide the legends meanwhile
+    if (shiftTo + hudWidth > main.clientWidth - HUD_GAP) {
+        place("", true);
+        return;
+    }
+
+    place(shiftTo + "px", false);
+}
+
+function queueHudLayout(): void {
+    if (hudLayoutQueued) return;
+    hudLayoutQueued = true;
+    requestAnimationFrame(layoutHudStack);
+}
+
+function initializeHudLayout(): void {
+
+    const main = document.querySelector<HTMLElement>(".main-content");
+    const hud = document.querySelector<HTMLElement>(".hud-stack");
+
+    if (!main || !hud) return;
+
+    // Panels opening / closing, legends switching on / off
+    new MutationObserver(queueHudLayout).observe(main, {
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["class"]
+    });
+
+    // Panels and legends changing height as their contents update
+    const resize = new ResizeObserver(queueHudLayout);
+
+    resize.observe(main);
+    resize.observe(hud);
+    main.querySelectorAll(".flight-panel, .inspection-panel, .flight-hud").forEach(el => resize.observe(el));
+
+    queueHudLayout();
+}
+
+initializeHudLayout();
 
 
 // ==============================================

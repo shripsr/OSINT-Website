@@ -112,6 +112,7 @@ let shipDetailsBusy = false;
 let shipRelayOk = null; // null = unknown, true/false once tested
 let shipRelayNote = ""; // extra line for the switch's tooltip
 let shipRelaySources = ""; // e.g. "aisstream.io + Pelyr"
+let shipTruncatedAt = 0; // last time the relay sent only some of the ships in the area (analysis.ts)
 let shipMoveTimer;
 let shipBusy = false;
 let shipQueued = false; // asked again while an update was loading
@@ -372,6 +373,8 @@ function readShipRelay(payload) {
     shipRelaySources = (Array.isArray(payload.sources) ? payload.sources : [])
         .map(cleanShipText).filter(Boolean).join(" + ");
     const inArea = shipNumber(payload.inArea, 0, Infinity) || 0;
+    if (inArea > rows.length)
+        shipTruncatedAt = Date.now();
     const warmingUp = (shipNumber(payload.listeningFor, 0, Infinity) || 0) < SHIP_RELAY_WARMUP_S;
     shipRelayNote = [
         inArea > rows.length

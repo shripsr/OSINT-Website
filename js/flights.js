@@ -322,7 +322,26 @@ function parseAircraft(a, receivedAt) {
         track = a.true_heading;
     else if (typeof a.mag_heading === "number")
         track = a.mag_heading;
+    // GPS integrity (used by the GPS jamming map and pattern alerts in
+    // analysis.ts). Only trusted for positions the aircraft itself sent
+    // (not MLAT / TIS-B) from transponders newer than ADS-B version 0.
+    // Jammed aircraft drop both NIC and NACp, so both must be low when
+    // both are sent.
+    let gps;
+    const nic = typeof a.nic === "number" ? a.nic : undefined;
+    const nacp = typeof a.nac_p === "number" ? a.nac_p : undefined;
+    const ownPosition = !a.type || a.type.startsWith("adsb") || a.type.startsWith("adsr");
+    if (ownPosition && a.version !== 0 && (nic !== undefined || nacp !== undefined)) {
+        const nicBad = nic === undefined ? null : nic < 7;
+        const nacBad = nacp === undefined ? null : nacp < 8;
+        const bad = typeof a.gpsOkBefore === "number" ||
+            (nicBad !== false && nacBad !== false && Boolean(nicBad || nacBad));
+        gps = bad ? "bad" : "ok";
+    }
     return {
+        gps: gps,
+        nic: nic,
+        nacp: nacp,
         hex: String(a.hex).toLowerCase(),
         callsign: a.flight ? String(a.flight).trim() : "",
         reg: a.r ? String(a.r) : "",
@@ -1158,6 +1177,9 @@ async function refreshFlights() {
         keepLocatedFlight(next);
         flightStore = next;
         recordFlightHistory(next);
+        // Playback recorder, pattern alerts and GPS jamming map (analysis.ts)
+        if (typeof analysisOnFlights === "function")
+            analysisOnFlights(next, true);
         setFlightStatus(okResults.length < plan.length
             ? `PARTIAL ${okResults.length}/${plan.length} - ${formatFlightTime(new Date())}${flightSourceName ? " | " + flightSourceName : ""}`
             : `UPDATED ${formatFlightTime(new Date())}${flightSourceName ? " | " + flightSourceName : ""}`);
@@ -1352,6 +1374,8 @@ async function refreshWorldFlights() {
     if (selectedRec) {
         recordFlightHistory(new Map([[selectedRec.hex, selectedRec]]));
     }
+    if (typeof analysisOnFlights === "function")
+        analysisOnFlights(next, false);
     showFlightNotice("");
     setFlightStatus(`WORLD VIEW | OPENSKY (${String(payload.mode || "anonymous").toUpperCase()}) | ` +
         `${formatFlightTime(new Date(payload.fetchedAt || Date.now()))} | ` +
@@ -2204,6 +2228,8 @@ function selectFlight(hex) {
     if (typeof closeStationPanel === "function")
         closeStationPanel();
     closeWatchlistPanel();
+    if (typeof closeAnalysisPanels === "function")
+        closeAnalysisPanels();
     selectedFlightHex = hex;
     if (map.getLayer(FLIGHT_SELECTED_LAYER)) {
         map.setFilter(FLIGHT_SELECTED_LAYER, ["==", ["get", "hex"], hex]);
@@ -2741,6 +2767,10 @@ function scanWatchlist(now) {
     }
     const arrived = [];
     live.forEach(function (rec, key) {
+        // Took off / landed / emergency (analysis.ts)
+        const watched = watchlist.find(e => e.key === key);
+        if (watched && typeof watchObserve === "function")
+            watchObserve(key, watched.label, rec);
         const status = watchStatusFor(key);
         status.known = true;
         status.rec = rec;
@@ -2755,7 +2785,18 @@ function scanWatchlist(now) {
     watchlistLive = live;
     watchlistHexes = hexes;
     if (arrived.length) {
-        flashFlightNotice(`WATCHLIST: ${arrived.join(", ")} ON THE MAP`);
+        if (typeof raiseAlert === "function") {
+            raiseAlert({
+                kind: "watch",
+                ref: arrived.length === 1 ? watchlist.find(e => e.label === arrived[0])?.key : undefined,
+                severity: 1,
+                title: `${arrived.join(", ")} ON THE MAP`,
+                body: "Watched aircraft in view now"
+            });
+        }
+        else {
+            flashFlightNotice(`WATCHLIST: ${arrived.join(", ")} ON THE MAP`);
+        }
     }
     renderWatchlist(now);
 }
@@ -2875,13 +2916,18 @@ async function locateWatched(key) {
 // Background: look up the watched entry that has gone longest without a
 // check (and isn't on the map). One lookup at a time, to stay polite.
 async function checkNextWatched() {
-    if (!flightsEnabled || document.hidden || watchlistCheckBusy || !watchlist.length)
+    // Hidden tab: only when desktop alerts are on (the map itself isn't updated
+    // then, so every entry is checked worldwide instead)
+    const background = document.hidden;
+    if (background && !(typeof alertsInBackground === "function" && alertsInBackground()))
+        return;
+    if (!flightsEnabled || watchlistCheckBusy || !watchlist.length)
         return;
     const now = Date.now();
     let entry;
     let oldest = Infinity;
     for (const candidate of watchlist) {
-        if (watchlistLive.has(candidate.key))
+        if (!background && watchlistLive.has(candidate.key))
             continue;
         const known = watchlistStatus.get(candidate.key);
         const at = known ? known.checkedAt : 0;
@@ -2906,13 +2952,26 @@ async function checkNextWatched() {
     const wasTransmitting = status.known && Boolean(status.rec);
     status.checkedAt = Date.now();
     if (rec !== undefined) {
+        // Took off / landed / emergency / signal lost (analysis.ts)
+        if (typeof watchObserve === "function")
+            watchObserve(entry.key, entry.label, rec);
         status.known = true;
         status.rec = rec;
         if (rec && !wasTransmitting &&
             status.checkedAt - status.alertedAt > FLIGHT_WATCH_ALERT_GAP_MS) {
             status.alertedAt = status.checkedAt;
-            flashFlightNotice(`WATCHLIST: ${entry.label} IS ${rec.onGround ? "TRANSMITTING ON THE GROUND" : "FLYING"}` +
-                " - OPEN THE WATCHLIST TO LOCATE IT", 9000);
+            const message = `${entry.label} IS ${rec.onGround ? "TRANSMITTING ON THE GROUND" : "FLYING"}`;
+            if (typeof raiseAlert === "function") {
+                raiseAlert({
+                    kind: "watch", ref: entry.key, severity: 1,
+                    title: message,
+                    body: "Click to locate it",
+                    lat: rec.lat, lon: rec.lon
+                });
+            }
+            else {
+                flashFlightNotice(message + " - OPEN THE WATCHLIST TO LOCATE IT", 9000);
+            }
         }
     }
     renderWatchlist(Date.now());
@@ -2972,6 +3031,8 @@ function toggleWatchlistPanel() {
     closeAirportPanel();
     if (typeof closeStationPanel === "function")
         closeStationPanel();
+    if (typeof closeAnalysisPanels === "function")
+        closeAnalysisPanels();
     if (typeof clearSelection === "function")
         clearSelection();
     panel.classList.add("visible");

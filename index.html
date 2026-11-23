@@ -142,6 +142,30 @@
         </div>
 
 
+        <div class="section-title">ANALYSIS</div>
+
+        <!-- Replay the last 2 hours of recorded aircraft + ships (see analysis.ts) -->
+        <div class="menu-item" id="playbackToggle" title="Replay recorded aircraft and ship tracks">
+            <span>&#9654;&#xFE0E;</span>
+            Track Playback
+            <span class="item-count" id="playbackCount">--</span>
+        </div>
+
+        <!-- Orbits, holding, search grids, position jumps... (see analysis.ts) -->
+        <div class="menu-item" id="patternToggle" title="Aircraft flying unusual patterns">
+            <span>&#10227;</span>
+            Flight Patterns
+            <span class="item-count" id="patternCount">0</span>
+        </div>
+
+        <!-- Dark ships + ship-to-ship meetings (see analysis.ts) -->
+        <div class="menu-item" id="shipActivityToggle" title="Ships that went dark, and ships meeting at sea">
+            <span>&#9875;&#xFE0E;</span>
+            Ship Activity
+            <span class="item-count" id="shipActivityCount">OFF</span>
+        </div>
+
+
         <div class="section-title">BASE MAP</div>
 
         <select id="mapStyleSelect" class="layer-select">
@@ -553,7 +577,159 @@
                     Watched aircraft get a green ring on the map.
                 </div>
 
+                <div class="airport-section-title">ALERTS</div>
+
+                <label class="pattern-filter">
+                    <input type="checkbox" id="alertDesktop">
+                    Desktop notifications (keeps checking while this tab is in the background)
+                </label>
+
+                <label class="pattern-filter">
+                    <input type="checkbox" id="alertSound">
+                    Sound
+                </label>
+
+                <div class="watch-note alert-note">
+                    You are alerted when a watched aircraft appears, takes
+                    off, lands, squawks an emergency, flies an unusual
+                    pattern or stops transmitting. Needs Flight Tracking on.
+                </div>
+
+                <div class="airport-section-title">RECENT ALERTS</div>
+
+                <div class="airport-list" id="alertLog"></div>
+
+                <div class="watch-hint" id="alertLogEmpty"></div>
+
+                <button id="alertClear" class="secondary-button" type="button">CLEAR ALERTS</button>
+
             </div>
+
+        </div>
+
+
+        <!-- FLIGHT PATTERNS: aircraft flying unusually (see analysis.ts) -->
+
+        <div class="flight-panel" id="patternPanel">
+
+            <div class="panel-header">
+
+                <span>FLIGHT PATTERNS</span>
+
+                <button id="closePatternPanel">×</button>
+
+            </div>
+
+            <div class="panel-content">
+
+                <label class="pattern-filter">
+                    <input type="checkbox" id="patternRoutine">
+                    Show routine (holding, circuits, GPS loss)
+                </label>
+
+                <label class="pattern-filter">
+                    <input type="checkbox" id="alertPatterns">
+                    Alert me about new serious (red) patterns
+                </label>
+
+                <div class="airport-list" id="patternList"></div>
+
+                <div class="watch-hint" id="patternEmpty"></div>
+
+                <div class="watch-note">
+                    Worked out from each aircraft's last 30 minutes of track:
+                    orbits, holding, back-and-forth search grids, loitering
+                    and impossible position jumps, plus emergency squawks,
+                    rapid descents and GPS loss. Red rings = most serious.
+                    Click an entry to open the aircraft.
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <!-- SHIP ACTIVITY: dark ships + ship-to-ship meetings (see analysis.ts) -->
+
+        <div class="flight-panel" id="shipActivityPanel">
+
+            <div class="panel-header">
+
+                <span>SHIP ACTIVITY</span>
+
+                <button id="closeShipActivityPanel">×</button>
+
+            </div>
+
+            <div class="panel-content">
+
+                <label class="pattern-filter">
+                    <input type="checkbox" id="alertShips">
+                    Alert me about new detections
+                </label>
+
+                <div class="airport-section-title ship-act-title">DARK SHIPS</div>
+
+                <div class="airport-list" id="darkShipList"></div>
+
+                <div class="watch-hint" id="darkShipEmpty"></div>
+
+                <div class="airport-section-title">SHIP MEETINGS</div>
+
+                <div class="airport-list" id="meetingList"></div>
+
+                <div class="watch-hint" id="meetingEmpty"></div>
+
+                <div class="watch-note">
+                    Dark: no AIS for an hour while ships around it are still
+                    heard (so it isn't just out of receiver range). Meeting:
+                    two ships stopped within 500 m for 20+ minutes, away from
+                    ports and crowded anchorages. Tankers together = possible
+                    ship-to-ship transfer; fishing vessel + cargo ship =
+                    possible transshipment. Harbour craft, ferries and leisure
+                    boats are ignored. Only areas on screen with Ship Tracking
+                    on are watched, so leave the map on an area.
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <!-- TRACK PLAYBACK: timeline bar (see analysis.ts) -->
+
+        <div class="playback-bar" id="playbackBar">
+
+            <button id="pbPlay" class="pb-play" type="button" title="Play / pause (space)">▶</button>
+
+            <select id="pbSpeed" class="pb-speed" title="Playback speed">
+                <option value="1">1×</option>
+                <option value="10">10×</option>
+                <option value="30">30×</option>
+                <option value="60">60×</option>
+                <option value="120">120×</option>
+                <option value="300">300×</option>
+            </select>
+
+            <div class="pb-timeline">
+                <input type="range" id="pbSlider" min="0" max="1" value="0" step="1" aria-label="Playback time">
+                <div class="pb-scale">
+                    <span id="pbStartLabel">--:--</span>
+                    <span id="pbEndLabel">--:--</span>
+                </div>
+            </div>
+
+            <div class="pb-clock">
+                <strong id="pbClock">--:--:--</strong>
+                <small id="pbAgo"></small>
+            </div>
+
+            <label class="pb-check" title="Show a trail behind every object">
+                <input type="checkbox" id="pbTrails" checked>
+                TRAILS
+            </label>
+
+            <button id="pbClose" class="pb-live" type="button" title="Back to the live map (Esc)">LIVE</button>
 
         </div>
 
@@ -716,6 +892,10 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/satellite.js/6.0.1/satellite.min.js"></script>
     <script src="js/satellites.js"></script>
+
+    <!-- PLAYBACK, PATTERNS, ALERTS, SHIP ACTIVITY (after flights.js + ships.js, before script.js) -->
+
+    <script src="js/analysis.js"></script>
 
     <!-- MAIN SCRIPT -->
 

@@ -392,6 +392,13 @@ textarea {
     color: var(--accent) !important;
 }
 
+/* Map credits ("i") sit on the same line as the scale bar, to its left,
+   instead of on a line of their own (see the control order in script.ts) */
+.maplibregl-ctrl-bottom-right > .maplibregl-ctrl-attrib {
+    clear: none;
+    margin: 0 0.5rem 0.625rem 0;
+}
+
 
 /* ==========================================
    LOADING SCREEN
@@ -996,13 +1003,13 @@ body:has(#flightPanel.visible) .inspection-panel {
 }
 
 
-/* Status + altitude legend (bottom left, above the scale bar) */
+/* Status + altitude legend (bottom left; the scale bar is bottom right) */
 
 .hud-stack {
     position: absolute;
 
     left: 0.625rem;
-    bottom: 3rem;
+    bottom: 0.625rem;
 
     display: flex;
     flex-direction: column-reverse;
@@ -1214,9 +1221,30 @@ body:has(#flightPanel.visible) .inspection-panel {
     display: none;
 }
 
+/* Close button: a small square inset from the corner, centred on the
+   title line (MapLibre's default sits flush in the corner) */
 .transit-popup .maplibregl-popup-close-button {
+    top: 0.4375rem;
+    right: 0.375rem;
+
+    width: 1.25rem;
+    height: 1.25rem;
+    padding: 0;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    border-radius: 3px;
+
+    color: var(--muted);
+    font-size: 1.125rem;
+    line-height: 1;
+}
+
+.transit-popup .maplibregl-popup-close-button:hover {
+    background-color: var(--panel-light);
     color: var(--text);
-    font-size: 1rem;
 }
 
 .transit-popup-mode {
@@ -1753,4 +1781,274 @@ a.transit-popup-button {
     height: 0.625rem;
     border-radius: 1px;
     box-shadow: inset 0 0 0 2px #0b1520;
+}
+
+
+/* ==========================================
+   ANALYSIS: PLAYBACK, PATTERNS, ALERTS, SHIP ACTIVITY
+   ========================================== */
+
+/* Sidebar: Flight Patterns turns red while something serious is flagged */
+.menu-item.alert > span:first-child,
+.menu-item.alert .item-count {
+    color: var(--red);
+}
+
+
+/* Playback timeline bar (bottom centre of the map) */
+
+.playback-bar {
+    display: none;
+
+    position: absolute;
+
+    left: 50%;
+    bottom: 1.25rem;
+
+    transform: translateX(-50%);
+
+    width: min(52rem, calc(100% - 2rem));
+
+    align-items: center;
+    gap: 0.75rem;
+
+    padding: 0.625rem 0.875rem;
+
+    background: #131b25f2;
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+
+    box-shadow: 0 0.3125rem 1.25rem #0008;
+
+    z-index: 850;
+
+    font-size: 0.6875rem;
+    letter-spacing: 1px;
+}
+
+.playback-bar.visible {
+    display: flex;
+}
+
+.pb-play {
+    flex: 0 0 auto;
+
+    width: 2.25rem;
+    height: 2.25rem;
+
+    background: var(--accent-dark);
+    border: none;
+    border-radius: 50%;
+
+    color: white;
+    cursor: pointer;
+
+    font-size: 0.8125rem;
+}
+
+.pb-play:hover {
+    background: #009bb5;
+}
+
+.pb-speed {
+    flex: 0 0 auto;
+
+    padding: 0.375rem;
+
+    background: #202c39;
+    color: var(--text);
+
+    border: 1px solid var(--border);
+    outline: none;
+
+    font-size: 0.6875rem;
+    cursor: pointer;
+}
+
+.pb-timeline {
+    flex: 1 1 auto;
+    min-width: 6rem;
+}
+
+.pb-timeline input[type="range"] {
+    width: 100%;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
+.pb-scale {
+    display: flex;
+    justify-content: space-between;
+
+    color: var(--muted);
+    font-size: 0.5625rem;
+}
+
+.pb-clock {
+    flex: 0 0 auto;
+
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+
+    min-width: 7rem;
+}
+
+.pb-clock strong {
+    color: var(--accent);
+    font-family: monospace;
+    font-size: 1rem;
+}
+
+.pb-clock small {
+    margin-top: 2px;
+
+    color: var(--muted);
+    font-size: 0.5625rem;
+    white-space: nowrap;
+}
+
+.pb-check {
+    flex: 0 0 auto;
+
+    display: flex;
+    align-items: center;
+    gap: 0.3125rem;
+
+    color: var(--muted);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.pb-check input {
+    accent-color: var(--accent);
+}
+
+.pb-live {
+    flex: 0 0 auto;
+
+    padding: 0.5rem 0.75rem;
+
+    background: transparent;
+    border: 1px solid var(--green);
+
+    color: var(--green);
+    cursor: pointer;
+
+    font-size: 0.625rem;
+    letter-spacing: 1px;
+}
+
+.pb-live:hover {
+    background: #00d68f22;
+}
+
+/* While replaying: live legends are hidden and notices move above the bar */
+body.playback-on .hud-stack {
+    display: none;
+}
+
+body.playback-on .flight-notice {
+    bottom: 6rem;
+}
+
+@media (max-width: 900px) {
+
+    .pb-check,
+    .pb-scale {
+        display: none;
+    }
+
+    .pb-clock {
+        min-width: 0;
+    }
+
+    .pb-clock small {
+        display: none;
+    }
+}
+
+
+/* Flight patterns panel */
+
+.pattern-filter {
+    display: flex;
+    align-items: center;
+    gap: 0.4375rem;
+
+    margin-bottom: 0.625rem;
+
+    color: var(--muted);
+    font-size: 0.625rem;
+
+    cursor: pointer;
+}
+
+.pattern-filter input {
+    accent-color: var(--accent);
+}
+
+.airport-row.pattern-row {
+    border-left-width: 3px;
+    border-left-style: solid;
+    border-left-color: var(--muted);
+}
+
+.airport-row.pattern-row.sev-2 {
+    border-left-color: #ffb300;
+}
+
+.airport-row.pattern-row.sev-3 {
+    border-left-color: var(--red);
+}
+
+.airport-row.pattern-row.sev-3 .airport-row-main {
+    color: #ff7b7b;
+}
+
+.airport-row.pattern-row.gone {
+    opacity: 0.55;
+}
+
+.pattern-row .airport-row-detail {
+    line-height: 1.4;
+}
+
+.pattern-row .pattern-meta {
+    margin-top: 0.25rem;
+
+    font-family: monospace;
+    font-size: 0.5625rem;
+    letter-spacing: 0.5px;
+}
+
+
+/* Alerts (watchlist panel) + ship activity panel */
+
+.alert-note {
+    margin: 0 0 0.25rem;
+}
+
+.ship-act-title {
+    margin-top: 0.5rem;
+    padding-top: 0;
+    border-top: none;
+}
+
+#alertClear {
+    margin-top: 0.5rem;
+}
+
+
+/* Legends (bottom left) move right of a left-side panel only when the two
+   would overlap; script.ts (layoutHudStack) measures and sets "left" */
+
+.hud-stack {
+    transition: left 0.2s ease;
+}
+
+/* No room beside the panel on a narrow window. visibility (not display)
+   so the legends can still be measured. */
+.hud-stack.hud-hidden {
+    visibility: hidden;
 }

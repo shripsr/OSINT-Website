@@ -81,6 +81,12 @@ interface FlightRecord {
     squawk: string;
     military: boolean;
     emergency: boolean;
+
+    // GPS integrity, from the regional ADS-B feeds only (see parseAircraft).
+    // undefined = unknown (OpenSky, MLAT positions, old transponders)
+    gps?: "ok" | "bad";
+    nic?: number;           // Navigation Integrity Category, 0-11 (higher = better)
+    nacp?: number;          // Navigation Accuracy Category for position, 0-11
 }
 
 /** An aircraft as the regional ADS-B feeds send it (ADS-B Exchange v2 JSON) */
@@ -106,6 +112,11 @@ interface AdsbAircraft {
     squawk?: string;
     emergency?: string;
     dbFlags?: number;
+    type?: string;          // where the position came from: "adsb_icao", "mlat", "tisb_icao", ...
+    version?: number;       // ADS-B version (0 = old transponder, integrity fields unreliable)
+    nic?: number;
+    nac_p?: number;
+    gpsOkBefore?: number;   // set by readsb while an aircraft has recently lost GPS
 }
 
 /** One OpenSky "state vector": a positional array, see parseOpenSkyState */
