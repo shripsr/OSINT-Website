@@ -169,6 +169,16 @@ function initializeMap(): void {
 
             maxZoom: 19,
 
+            // A little steeper than the default 60 so skylines read in 3D
+            maxPitch: 60,
+
+            // MapLibre's own mouse rotate (right-drag, ctrl + drag) and box
+            // zoom (shift + drag) are off. compass.ts gives shift + drag to
+            // rotate / tilt and ctrl + drag to box zoom instead.
+            dragRotate: false,
+
+            boxZoom: false,
+
             // Added below instead, so it can sit above the scale bar
             attributionControl: false,
 
@@ -209,10 +219,21 @@ function initializeMap(): void {
 
         map.addControl(
             new maplibregl.NavigationControl({
-                visualizePitch: true
+                // Our own compass (below) replaces the small built-in one
+                showCompass: false
             }),
             "bottom-right"
         );
+
+
+        // COMPASS + 2D / 3D BUTTON, above the zoom buttons (see compass.js)
+
+        map.addControl(new ViewCompassControl(), "bottom-right");
+
+
+        // SHIFT + DRAG: ROTATE / TILT.  CTRL + DRAG: BOX ZOOM (see compass.js)
+
+        initializeMouseGestures();
 
 
         // MAP LOAD EVENT
@@ -336,6 +357,11 @@ function initializeMap(): void {
         // PLAYBACK, FLIGHT PATTERNS, GPS JAMMING (see analysis.js)
 
         initializeAnalysis();
+
+
+        // 3D BUILDINGS FOR THE TILTED VIEW (see buildings.js)
+
+        initializeBuildings();
 
     }
 

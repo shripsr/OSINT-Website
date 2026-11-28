@@ -291,6 +291,9 @@ textarea {
     cursor: pointer;
 }
 
+/* Breathing room before the 3D Buildings toggle */
+.layer-select + .menu-item { margin-top: 0.5rem; }
+
 .layer-select:focus {
     border-color: var(--accent);
 }
@@ -2051,4 +2054,53 @@ body.playback-on .flight-notice {
    so the legends can still be measured. */
 .hud-stack.hud-hidden {
     visibility: hidden;
+}
+
+/* COMPASS + 2D / 3D VIEW CONTROL (see compass.ts) */
+
+.view-compass .view-compass-dial {
+    width: 2.25rem; height: 2.25rem;
+    display: flex; align-items: center; justify-content: center;
+    perspective: 3.5rem;
+    cursor: grab;
+    touch-action: none;
+}
+
+.view-compass .view-compass-dial.is-dragging { cursor: grabbing; }
+
+.view-compass-needle {
+    display: flex;
+    transition: opacity 0.2s ease;
+    will-change: transform;
+}
+
+/* North-up and flat: nothing to reset, so it steps back a little */
+.view-compass-dial.is-reset .view-compass-needle { opacity: 0.55; }
+.view-compass-dial.is-reset:hover .view-compass-needle { opacity: 1; }
+
+.view-compass .view-compass-mode {
+    width: 2.25rem; height: 1.75rem;
+    color: var(--text);
+    font-size: 0.75rem; font-weight: 600; line-height: 1;
+    font-family: inherit;
+    letter-spacing: 0.04em;
+    border-top: 1px solid var(--border) !important;
+}
+
+.view-compass .view-compass-mode:hover { color: var(--accent); }
+
+.view-compass button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+
+/* SHIFT + DRAG ROTATE / CTRL + DRAG BOX ZOOM (see compass.ts) */
+
+.gesture-rotating .maplibregl-canvas { cursor: grabbing; }
+.gesture-boxing .maplibregl-canvas { cursor: crosshair; }
+
+.gesture-zoom-box {
+    position: absolute;
+    z-index: 2;
+    pointer-events: none;
+    border: 2px dashed var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
 }

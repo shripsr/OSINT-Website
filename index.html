@@ -176,6 +176,13 @@
 
         </select>
 
+        <!-- Extruded buildings for the tilted view (see buildings.ts) -->
+        <div class="menu-item" id="buildingToggle" title="Show buildings in 3D when the map is tilted">
+            <span>&#9638;</span>
+            3D Buildings
+            <span class="item-count" id="buildingCount">OFF</span>
+        </div>
+
 
         <div class="section-title">MAP INFORMATION</div>
 
@@ -896,6 +903,14 @@
     <!-- PLAYBACK, PATTERNS, ALERTS, SHIP ACTIVITY (after flights.js + ships.js, before script.js) -->
 
     <script src="js/analysis.js"></script>
+
+    <!-- 3D BUILDINGS (before script.js) -->
+
+    <script src="js/buildings.js"></script>
+
+    <!-- COMPASS + 2D / 3D VIEW CONTROL (before script.js) -->
+
+    <script src="js/compass.js"></script>
 
     <!-- MAIN SCRIPT -->
 
